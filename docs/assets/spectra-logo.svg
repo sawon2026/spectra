@@ -1,0 +1,24 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 240 240" width="240" height="240" role="img" aria-label="Spectra">
+  <defs>
+    <linearGradient id="g" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#0ea5e9"/>
+      <stop offset="50%" stop-color="#6366f1"/>
+      <stop offset="100%" stop-color="#8b5cf6"/>
+    </linearGradient>
+    <linearGradient id="ring" x1="0%" y1="100%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="#38bdf8"/>
+      <stop offset="100%" stop-color="#a78bfa"/>
+    </linearGradient>
+  </defs>
+  <circle cx="120" cy="120" r="108" fill="none" stroke="url(#ring)" stroke-width="6" opacity="0.9"/>
+  <g transform="translate(120,120)">
+    <rect x="-64" y="-8" width="12" height="16" rx="3" fill="url(#g)" opacity="0.55"/>
+    <rect x="-44" y="-22" width="12" height="44" rx="3" fill="url(#g)" opacity="0.7"/>
+    <rect x="-24" y="-36" width="12" height="72" rx="3" fill="url(#g)" opacity="0.85"/>
+    <rect x="-4" y="-48" width="12" height="96" rx="3" fill="url(#g)"/>
+    <rect x="16" y="-36" width="12" height="72" rx="3" fill="url(#g)" opacity="0.85"/>
+    <rect x="36" y="-22" width="12" height="44" rx="3" fill="url(#g)" opacity="0.7"/>
+    <rect x="56" y="-8" width="12" height="16" rx="3" fill="url(#g)" opacity="0.55"/>
+  </g>
+  <path d="M 48 120 A 72 72 0 0 1 192 120" fill="none" stroke="#94a3b8" stroke-width="2" opacity="0.35"/>
+</svg>
