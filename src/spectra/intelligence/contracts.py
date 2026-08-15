@@ -8,7 +8,6 @@ from pydantic import BaseModel, Field, ValidationError, field_validator
 
 from spectra.intelligence.task import ArtifactType, TaskType
 
-
 _FORBIDDEN_KEYS = frozenset({
     "command", "shell", "cmd", "exec", "bash", "powershell", "sh",
     "authorization", "auth_override", "policy_override", "scope_change",
