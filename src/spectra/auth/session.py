@@ -1,4 +1,4 @@
-"""Session/token authentication — offline-first, no plaintext passwords.
+"""Persistent session/token authentication — offline-first, no plaintext passwords.
 
 Auth answers: who is the user?
 PolicyEngine answers: is this capability execution allowed?
@@ -15,6 +15,8 @@ from datetime import UTC, datetime, timedelta
 from enum import Enum
 from typing import Any
 from uuid import UUID, uuid4
+
+from spectra.core.db import SessionRow, get_session
 
 
 class Role(str, Enum):
@@ -88,14 +90,13 @@ def _hash_token(token: str, salt: str = "spectra-v1") -> str:
 
 
 class AuthService:
-    """In-memory session store with optional static API token.
+    """SQLite-backed session store with optional static API token.
 
-    Offline mode: if SPECTRA_API_TOKEN is unset, local admin principal is allowed.
     Never stores plaintext tokens — only HMAC hashes.
+    Offline mode: if SPECTRA_API_TOKEN is unset, local principal is allowed.
     """
 
     def __init__(self) -> None:
-        self._sessions: dict[str, SessionInfo] = {}
         self._static_hash: str | None = None
         static = os.environ.get("SPECTRA_API_TOKEN")
         if static:
@@ -109,15 +110,31 @@ class AuthService:
     ) -> tuple[str, SessionInfo]:
         token = secrets.token_urlsafe(32)
         th = _hash_token(token)
+        now = datetime.now(UTC)
         session = SessionInfo(
             session_id=uuid4(),
             subject=subject,
             role=role,
             token_hash=th,
-            expires_at=datetime.now(UTC) + timedelta(hours=ttl_hours),
+            created_at=now,
+            expires_at=now + timedelta(hours=ttl_hours),
             offline=not bool(self._static_hash),
         )
-        self._sessions[th] = session
+        with get_session() as db:
+            db.add(
+                SessionRow(
+                    id=session.session_id,
+                    subject=session.subject,
+                    role=session.role.value,
+                    token_hash=th,
+                    created_at=session.created_at,
+                    expires_at=session.expires_at,
+                    revoked_at=None,
+                    last_seen_at=now,
+                    offline=session.offline,
+                    metadata_json={},
+                )
+            )
         return token, session
 
     def resolve(self, bearer: str | None, role_hint: str | None = None) -> SessionInfo | None:
@@ -134,10 +151,33 @@ class AuthService:
                     token_hash=th,
                     offline=False,
                 )
-            sess = self._sessions.get(th)
-            if sess and not sess.is_expired():
-                return sess
-            return None
+            with get_session() as db:
+                row = db.query(SessionRow).filter(SessionRow.token_hash == th).first()
+                if not row:
+                    return None
+                if row.revoked_at is not None:
+                    return None
+                expires = row.expires_at
+                if expires is not None:
+                    if expires.tzinfo is None:
+                        expires = expires.replace(tzinfo=UTC)
+                    if datetime.now(UTC) > expires:
+                        return None
+                try:
+                    role = Role(str(row.role))
+                except ValueError:
+                    role = Role.VIEWER
+                setattr(row, "last_seen_at", datetime.now(UTC))
+                return SessionInfo(
+                    session_id=UUID(str(row.id)),
+                    subject=str(row.subject),
+                    role=role,
+                    token_hash=str(row.token_hash),
+                    created_at=row.created_at,
+                    expires_at=row.expires_at,
+                    offline=bool(row.offline),
+                    metadata=dict(row.metadata_json or {}),
+                )
         if self._static_hash:
             return None
         role = Role.ADMIN
@@ -153,7 +193,20 @@ class AuthService:
 
     def revoke(self, bearer: str) -> bool:
         th = _hash_token(bearer)
-        return self._sessions.pop(th, None) is not None
+        with get_session() as db:
+            row = db.query(SessionRow).filter(SessionRow.token_hash == th).first()
+            if not row:
+                return False
+            setattr(row, "revoked_at", datetime.now(UTC))
+            return True
+
+    def revoke_session(self, session_id: UUID) -> bool:
+        with get_session() as db:
+            row = db.query(SessionRow).filter(SessionRow.id == session_id).first()
+            if not row:
+                return False
+            setattr(row, "revoked_at", datetime.now(UTC))
+            return True
 
 
 _auth: AuthService | None = None
