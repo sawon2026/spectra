@@ -5,7 +5,7 @@ export default function GraphPage() {
       <p className="text-sm text-slate-400">
         Visualizes nodes (Case, Artifact, Observation, Evidence, Finding, Capability) and edges
         (SUPPORTS, PRODUCED, ANALYZED_BY, …). Data from{" "}
-        <code className="font-mono text-xs">/api/v1/graph/nodes|edges/{"{"}"{case_id}"{'}'}</code>. The
+        <code className="font-mono text-xs">/api/v1/graph/nodes|edges/{"{case_id}"}</code>. The
         graph never authorizes execution.
       </p>
     </div>
