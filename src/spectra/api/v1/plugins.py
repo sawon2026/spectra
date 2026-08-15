@@ -108,8 +108,8 @@ def set_plugin_state(
         row = session.query(PluginConfigRow).filter(PluginConfigRow.name == name).first()
         if not row:
             raise HTTPException(status.HTTP_404_NOT_FOUND, detail="Plugin not found")
-        setattr(row, "state", body.state)
-        setattr(row, "updated_at", datetime.now(UTC))
+        row.state = body.state  # type: ignore[assignment]
+        row.updated_at = datetime.now(UTC)  # type: ignore[assignment]
         return PluginOut(
             name=str(row.name),
             version=str(row.version or "0.1.0"),
