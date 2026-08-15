@@ -13,6 +13,7 @@ from spectra.cases.service import CaseService
 from spectra.core.config import SpectraSettings, get_settings
 from spectra.core.db import init_db
 from spectra.events.bus import EventBus
+from spectra.events.sse import get_sse_hub
 from spectra.evidence.service import EvidenceService
 from spectra.intelligence.workflow import WorkflowEngine
 from spectra.knowledge.findings import FindingEngine
@@ -60,6 +61,8 @@ def get_services() -> AppServices:
         settings = get_settings()
         init_db(settings)
         bus = EventBus(persist=True)
+        hub = get_sse_hub()
+        bus.subscribe(hub.on_event)
         policy = PolicyEngine(event_bus=bus)
         cases = CaseService(event_bus=bus)
         caps = CapabilityRegistry(event_bus=bus)
@@ -119,7 +122,6 @@ def get_principal(
 
 def require_role(*allowed: str):
     def _check(principal: Principal = None) -> Principal:  # type: ignore[assignment]
-        # FastAPI will inject principal via Depends in routers
         return principal  # placeholder; routers use explicit checks
 
     return _check
