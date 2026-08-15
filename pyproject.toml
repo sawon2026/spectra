@@ -34,6 +34,8 @@ dependencies = [
     "structlog>=24.1",
     "platformdirs>=4.2",
     "httpx>=0.27",
+    "fastapi>=0.110",
+    "uvicorn[standard]>=0.27",
 ]
 
 [project.optional-dependencies]
@@ -44,10 +46,12 @@ dev = [
     "mypy>=1.8",
     "ruff>=0.3",
     "types-setuptools",
+    "httpx>=0.27",
 ]
 
 [project.scripts]
 spectra = "spectra.cli.main:app"
+spectra-api = "spectra.api.app:app"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/spectra"]
