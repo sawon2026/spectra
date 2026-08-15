@@ -99,25 +99,17 @@ def get_principal(
     x_spectra_role: Annotated[str | None, Header()] = None,
     authorization: Annotated[str | None, Header()] = None,
 ) -> Principal:
-    """Authentication-ready dependency.
+    """Resolve principal via AuthService (HMAC sessions / offline local)."""
+    from spectra.auth.session import get_auth_service
 
-    Offline/local mode: no token required; role may be hinted via header.
-    When SPECTRA_API_TOKEN is set, Bearer token is required.
-    """
-    import os
-
-    token = os.environ.get("SPECTRA_API_TOKEN")
-    if token:
-        if not authorization or not authorization.startswith("Bearer "):
-            raise HTTPException(status.HTTP_401_UNAUTHORIZED, detail="Bearer token required")
-        if authorization.removeprefix("Bearer ").strip() != token:
-            raise HTTPException(status.HTTP_401_UNAUTHORIZED, detail="Invalid token")
-        role = x_spectra_role or "researcher"
-    else:
-        role = x_spectra_role or "admin"
-    if role not in ("admin", "researcher", "viewer"):
-        role = "viewer"
-    return Principal(subject="local", role=role, offline=not bool(token))
+    bearer: str | None = None
+    if authorization and authorization.startswith("Bearer "):
+        bearer = authorization.removeprefix("Bearer ").strip()
+    auth = get_auth_service()
+    sess = auth.resolve(bearer, role_hint=x_spectra_role)
+    if sess is None:
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, detail="Authentication required")
+    return Principal(subject=sess.subject, role=sess.role.value, offline=sess.offline)
 
 
 def require_role(*allowed: str):
