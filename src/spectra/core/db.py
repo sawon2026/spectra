@@ -357,3 +357,34 @@ class ProvenanceLinkRow(Base):
     content_hash = Column(String(128), nullable=True)
     payload = Column(JSON, default=dict)
     created_at = Column(DateTime(timezone=True), nullable=False)
+
+
+class SessionRow(Base):
+    """Durable auth session — stores token HMAC only, never plaintext."""
+
+    __tablename__ = "sessions"
+
+    id = Column(GUID(), primary_key=True)
+    subject = Column(String(128), nullable=False, index=True)
+    role = Column(String(32), nullable=False, default="researcher")
+    token_hash = Column(String(128), nullable=False, unique=True, index=True)
+    created_at = Column(DateTime(timezone=True), nullable=False)
+    expires_at = Column(DateTime(timezone=True), nullable=True, index=True)
+    revoked_at = Column(DateTime(timezone=True), nullable=True)
+    last_seen_at = Column(DateTime(timezone=True), nullable=True)
+    offline = Column(Boolean, default=False)
+    metadata_json = Column(JSON, default=dict)
+
+
+class PluginConfigRow(Base):
+    """Plugin enable/disable and config state."""
+
+    __tablename__ = "plugin_configs"
+
+    id = Column(GUID(), primary_key=True)
+    name = Column(String(128), nullable=False, unique=True, index=True)
+    version = Column(String(32), default="0.1.0")
+    state = Column(String(32), nullable=False, default="available")
+    health = Column(String(32), default="unknown")
+    config_json = Column(JSON, default=dict)
+    updated_at = Column(DateTime(timezone=True), nullable=True)
