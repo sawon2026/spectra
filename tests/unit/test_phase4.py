@@ -1,113 +1,131 @@
-"""Phase 4 tests: android adapter, reporting, AI provider null, doctor surface."""
+"""Phase 4 tests: android adapter, reports, LLM validation, doctor."""
 
 from __future__ import annotations
 
-import json
 import zipfile
-from pathlib import Path
 from uuid import uuid4
 
 import pytest
 
 from spectra.ai.provider import NullLLMProvider, parse_model_json
-from spectra.models.scope import AuthStatus, NetworkProfile, Scope
-from spectra.reporting.export import ReportBundle, ReportExporter
+from spectra.intelligence.observation import Observation, ObservationStatus
+from spectra.knowledge.findings import FindingEngine
+from spectra.models.case import CaseCreate
+from spectra.models.scope import AuthStatus, NetworkProfile, ScopeCreate
+from spectra.reporting.export import ReportExporter
 from spectra.tools.android.apk_meta import ApkMetadataAdapter
 
 
-def _make_minimal_apk(path: Path) -> None:
-    with zipfile.ZipFile(path, "w") as zf:
-        zf.writestr("AndroidManifest.xml", b"dummy")
+def test_apk_metadata_on_minimal_zip(policy, event_bus, tmp_path, case_service):
+    apk = tmp_path / "sample.apk"
+    with zipfile.ZipFile(apk, "w") as zf:
+        zf.writestr("AndroidManifest.xml", b"not-real-binary-xml")
         zf.writestr("classes.dex", b"dex\n")
         zf.writestr("META-INF/CERT.RSA", b"cert")
 
-
-def test_apk_metadata_adapter(tmp_path: Path):
-    apk = tmp_path / "sample.apk"
-    _make_minimal_apk(apk)
-    adapter = ApkMetadataAdapter()
-    assert adapter.is_available() is True
-    scope = Scope(
-        case_id=uuid4(),
-        auth_status=AuthStatus.GRANTED,
-        network_profile=NetworkProfile.OFFLINE,
+    case = case_service.create(CaseCreate(name="apk-case"))
+    case_service.set_scope(
+        ScopeCreate(
+            case_id=case.id,
+            auth_status=AuthStatus.GRANTED,
+            network_profile=NetworkProfile.OFFLINE,
+            allowed_activities=["android.apk.metadata"],
+            in_scope_assets=[],
+        )
     )
-    result = adapter.execute(scope=scope, case_id=scope.case_id, inputs={"path": str(apk)})
-    assert result.success is True
-    assert result.metadata is not None
+    scope = case_service.get_scope(case.id)
+    adapter = ApkMetadataAdapter(policy, event_bus)
+    assert adapter.is_available()
+    result = adapter.execute(scope=scope, case_id=case.id, inputs={"path": str(apk)})
+    assert result.success
     assert result.metadata.get("has_android_manifest") is True
     assert result.metadata.get("has_dex") is True
-    assert "sha256" in result.metadata
+    assert result.metadata.get("sha256")
 
 
-def test_apk_rejects_non_zip(tmp_path: Path):
-    f = tmp_path / "not.apk"
-    f.write_text("not a zip")
-    adapter = ApkMetadataAdapter()
-    scope = Scope(
-        case_id=uuid4(),
-        auth_status=AuthStatus.GRANTED,
-        network_profile=NetworkProfile.OFFLINE,
+def test_apk_metadata_blocked_without_scope(policy, event_bus, tmp_path):
+    apk = tmp_path / "x.apk"
+    with zipfile.ZipFile(apk, "w") as zf:
+        zf.writestr("AndroidManifest.xml", b"x")
+    adapter = ApkMetadataAdapter(policy, event_bus)
+    result = adapter.execute(scope=None, case_id=uuid4(), inputs={"path": str(apk)})
+    assert not result.success
+    assert "scope" in (result.error or "").lower() or "auth" in (result.error or "").lower()
+
+
+def test_apk_malformed(policy, event_bus, tmp_path, case_service):
+    bad = tmp_path / "bad.apk"
+    bad.write_bytes(b"not-a-zip")
+    case = case_service.create(CaseCreate(name="bad-apk"))
+    case_service.set_scope(
+        ScopeCreate(
+            case_id=case.id,
+            auth_status=AuthStatus.GRANTED,
+            network_profile=NetworkProfile.OFFLINE,
+            allowed_activities=["android.apk.metadata"],
+        )
     )
-    result = adapter.execute(scope=scope, case_id=scope.case_id, inputs={"path": str(f)})
-    assert result.success is False
-
-
-def test_report_exporter_markdown_json():
-    bundle = ReportBundle(
-        case_id=str(uuid4()),
-        case_name="demo",
-        findings=[{"title": "f1", "severity": "low"}],
-        evidence_count=1,
-        observations=[],
+    adapter = ApkMetadataAdapter(policy, event_bus)
+    result = adapter.execute(
+        scope=case_service.get_scope(case.id),
+        case_id=case.id,
+        inputs={"path": str(bad)},
     )
-    exporter = ReportExporter()
+    assert not result.success
+
+
+def test_report_markdown_json(case_service, event_bus):
+    case = case_service.create(CaseCreate(name="report-case", description="demo"))
+    engine = FindingEngine(event_bus=event_bus)
+    obs = Observation(
+        investigation_id=uuid4(),
+        capability="android.apk.metadata",
+        status=ObservationStatus.SUCCESS,
+        summary="manifest present",
+    )
+    engine.create_from_observation(case_id=case.id, observation=obs, title="Manifest present")
+    exporter = ReportExporter(engine)
+    bundle = exporter.build(case)
     md = exporter.to_markdown(bundle)
-    assert "demo" in md
+    assert "Executive Summary" in md
+    assert "Manifest present" in md
     js = exporter.to_json(bundle)
-    data = json.loads(js)
-    assert data["case_name"] == "demo"
+    assert "findings" in js
 
 
-def test_null_llm_provider():
-    p = NullLLMProvider()
-    assert p.is_available() is False
-    out = p.complete("hello")
-    assert out is None or out == ""
-
-
-def test_parse_model_json_valid():
-    raw = '{"tasks": [{"name": "x"}], "notes": "ok"}'
-    parsed = parse_model_json(raw)
-    assert parsed is not None
-    assert "tasks" in parsed
-
-
-def test_parse_model_json_invalid():
-    assert parse_model_json("not json") is None
-    assert parse_model_json("") is None
-
-
-def test_apk_policy_gate(tmp_path: Path):
-    apk = tmp_path / "s.apk"
-    _make_minimal_apk(apk)
-    adapter = ApkMetadataAdapter()
-    scope = Scope(
-        case_id=uuid4(),
-        auth_status=AuthStatus.DENIED,
-        network_profile=NetworkProfile.OFFLINE,
+def test_llm_parse_valid():
+    resp = parse_model_json(
+        {
+            "task_type": "android",
+            "artifact_type": "apk",
+            "objectives": ["inspect_manifest"],
+            "requested_capabilities": ["android.apk.metadata"],
+            "risk_level": "low",
+            "confidence": 0.8,
+        }
     )
-    result = adapter.execute(scope=scope, case_id=scope.case_id, inputs={"path": str(apk)})
-    assert result.success is False
+    assert resp.task_type.value == "android"
 
 
-def test_report_bundle_defaults():
-    b = ReportBundle(case_id="x", case_name="y")
-    assert b.findings == []
-    assert b.evidence_count == 0
+def test_llm_rejects_shell_field():
+    with pytest.raises(ValueError, match="Forbidden|Invalid|command"):
+        parse_model_json({"task_type": "android", "command": "rm -rf /"})
 
 
-def test_apk_missing_path():
-    adapter = ApkMetadataAdapter()
-    result = adapter.execute(scope=None, case_id=uuid4(), inputs={})
-    assert result.success is False
+def test_llm_rejects_malformed():
+    with pytest.raises(ValueError):
+        parse_model_json("not-json{")
+
+
+def test_null_provider_not_configured():
+    p = NullLLMProvider()
+    assert p.is_configured() is False
+
+
+def test_doctor_runs(capsys):
+    from spectra.cli.main import doctor
+
+    doctor()
+    out = capsys.readouterr().out
+    assert "Core" in out or "Spectra" in out
+    assert "Policy" in out or "policy" in out.lower() or "OK" in out
