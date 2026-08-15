@@ -4,12 +4,14 @@ from fastapi import APIRouter
 
 from spectra.api.v1 import (
     audit,
+    auth,
     capabilities,
     cases,
     events,
     findings,
     graph,
     health,
+    plugins,
     providers,
     reports,
     timeline,
@@ -18,6 +20,7 @@ from spectra.api.v1 import (
 
 api_router = APIRouter(prefix="/api/v1")
 api_router.include_router(health.router, tags=["health"])
+api_router.include_router(auth.router, prefix="/auth", tags=["auth"])
 api_router.include_router(cases.router, prefix="/cases", tags=["cases"])
 api_router.include_router(workflows.router, prefix="/workflows", tags=["workflows"])
 api_router.include_router(findings.router, prefix="/findings", tags=["findings"])
@@ -28,3 +31,4 @@ api_router.include_router(providers.router, prefix="/providers", tags=["provider
 api_router.include_router(reports.router, prefix="/reports", tags=["reports"])
 api_router.include_router(events.router, prefix="/events", tags=["events"])
 api_router.include_router(audit.router, prefix="/audit", tags=["audit"])
+api_router.include_router(plugins.router, prefix="/plugins", tags=["plugins"])
