@@ -322,5 +322,76 @@ def evidence_cmd(
         raise typer.Exit(1)
 
 
+@app.command("research")
+def research_cmd(
+    case_id: str = typer.Option(..., "--case", "-c"),
+    goal: str = typer.Option(..., "--goal", "-g", help="Research goal text"),
+    path: str = typer.Option("", "--path", "-p", help="Optional artifact path"),
+    max_steps: int = typer.Option(6, "--max-steps", help="Max execution steps"),
+    json_out: bool = typer.Option(False, "--json", help="JSON summary output"),
+) -> None:
+    """Run a policy-gated research workflow for a case goal."""
+    _init()
+    assert _cases is not None and _policy is not None and _caps is not None and _bus is not None
+    from spectra.intelligence.workflow import WorkflowEngine
+
+    engine = WorkflowEngine(
+        policy=_policy,
+        registry=_caps,
+        case_service=_cases,
+        event_bus=_bus,
+    )
+    cid = UUID(case_id)
+    wf, task, state, observations = engine.start(cid, goal, path, max_steps=max_steps)
+    if json_out:
+        import json
+
+        console.print(
+            json.dumps(
+                {
+                    "workflow_id": str(wf.id),
+                    "status": wf.status.value,
+                    "task_type": task.task_type.value,
+                    "investigation_status": state.status.value,
+                    "observations": [
+                        {"capability": o.capability, "status": o.status.value, "summary": (o.summary or "")[:200]}
+                        for o in observations
+                    ],
+                    "decisions": [
+                        {"kind": d.kind, "summary": d.summary} for d in wf.decision_history[-10:]
+                    ],
+                },
+                indent=2,
+            )
+        )
+    else:
+        console.print(f"[green]Workflow[/green] {wf.id}  status={wf.status.value}")
+        console.print(f"  Task type: {task.task_type.value}")
+        console.print(f"  Investigation: {state.status.value}")
+        console.print(f"  Observations: {len(observations)}")
+        for o in observations:
+            console.print(f"    - {o.capability}: {o.status.value}")
+
+
+@app.command("findings")
+def findings_cmd(
+    case_id: str = typer.Option(..., "--case", "-c"),
+) -> None:
+    """List findings for a case."""
+    _init()
+    from spectra.knowledge.findings import FindingEngine
+
+    engine = FindingEngine(event_bus=_bus)
+    items = engine.list_for_case(UUID(case_id))
+    table = Table(title="Findings")
+    table.add_column("Title")
+    table.add_column("Severity")
+    table.add_column("Confidence")
+    table.add_column("Status")
+    for f in items:
+        table.add_row(f.title[:60], f.severity.value, f"{f.confidence:.2f}", f.status.value)
+    console.print(table)
+
+
 if __name__ == "__main__":
     app()
