@@ -13,11 +13,13 @@ from spectra.intelligence.goal import ResearchGoal
 from spectra.intelligence.observation import Observation
 from spectra.intelligence.state import InvestigationState
 from spectra.intelligence.task import Task
-from spectra.knowledge.findings import FindingEngine
 from spectra.knowledge.graph import KnowledgeGraph, NodeType
 from spectra.knowledge.memory import CaseMemory
 from spectra.knowledge.observation_repo import ObservationRepository
 from spectra.models.scope import Scope
+
+# Lazy import FindingEngine inside methods to avoid circular import:
+# findings → intelligence.observation → intelligence.__init__ → context → findings
 
 
 class ResearchContext(BaseModel):
@@ -50,14 +52,19 @@ class ResearchContextManager:
         self,
         case_service: CaseService,
         registry: CapabilityRegistry,
-        finding_engine: FindingEngine | None = None,
+        finding_engine: Any = None,
         memory: CaseMemory | None = None,
         graph: KnowledgeGraph | None = None,
         observation_repo: ObservationRepository | None = None,
     ) -> None:
         self.cases = case_service
         self.registry = registry
-        self.findings = finding_engine or FindingEngine()
+        if finding_engine is not None:
+            self.findings = finding_engine
+        else:
+            from spectra.knowledge.findings import FindingEngine
+
+            self.findings = FindingEngine()
         self.memory = memory or CaseMemory()
         self.graph = graph or KnowledgeGraph()
         self.obs_repo = observation_repo or ObservationRepository()
