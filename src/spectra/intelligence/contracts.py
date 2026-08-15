@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from typing import Any
-from uuid import UUID, uuid4
 
 from pydantic import BaseModel, Field, ValidationError, field_validator
 

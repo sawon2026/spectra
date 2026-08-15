@@ -7,8 +7,8 @@ from uuid import UUID
 
 from pydantic import BaseModel, Field
 
-from spectra.intelligence.observation import Observation, ObservationStatus
 from spectra.core.logging import get_logger
+from spectra.intelligence.observation import Observation, ObservationStatus
 
 logger = get_logger(__name__)
 
@@ -16,7 +16,7 @@ logger = get_logger(__name__)
 class Indicator(BaseModel):
     """Normalized indicator extracted from structured observation data."""
 
-    kind: str
+    kind: str  # e.g. hash, domain, file_type, cert, path
     value: str
     source_capability: str = ""
     confidence: float = Field(default=0.5, ge=0.0, le=1.0)
@@ -55,12 +55,14 @@ class ObservationInterpreter:
         meta: dict[str, Any] = dict(raw_meta) if isinstance(raw_meta, dict) else data
         cap = observation.capability or ""
 
+        # Hash indicators
         sha = meta.get("sha256") or meta.get("hash") or data.get("sha256")
         if isinstance(sha, str) and len(sha) >= 32:
             result.indicators.append(
                 Indicator(kind="hash", value=sha[:64], source_capability=cap, confidence=0.95)
             )
 
+        # APK / Android signals
         if meta.get("has_android_manifest"):
             result.indicators.append(
                 Indicator(kind="file_type", value="apk_with_manifest", source_capability=cap, confidence=0.9)
@@ -78,6 +80,7 @@ class ObservationInterpreter:
                     Indicator(kind="cert", value=str(c)[:256], source_capability=cap, confidence=0.7)
                 )
 
+        # File-info style stdout
         summary = (observation.summary or "").lower()
         if "elf" in summary:
             result.indicators.append(
@@ -90,6 +93,7 @@ class ObservationInterpreter:
             )
             result.next_step_suggestions.append("strings-extract")
 
+        # Suspicious keyword heuristics on bounded summary only
         for token in ("http://", "https://", ".onion", "password", "api_key", "secret"):
             if token in summary:
                 result.indicators.append(
