@@ -3,6 +3,7 @@
 from fastapi import APIRouter
 
 from spectra.api.v1 import (
+    audit,
     capabilities,
     cases,
     events,
@@ -26,3 +27,4 @@ api_router.include_router(capabilities.router, prefix="/capabilities", tags=["ca
 api_router.include_router(providers.router, prefix="/providers", tags=["providers"])
 api_router.include_router(reports.router, prefix="/reports", tags=["reports"])
 api_router.include_router(events.router, prefix="/events", tags=["events"])
+api_router.include_router(audit.router, prefix="/audit", tags=["audit"])
