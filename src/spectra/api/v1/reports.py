@@ -139,3 +139,62 @@ code{{background:#f4f4f4;padding:0.1rem 0.3rem;border-radius:3px}}
 <h2>Findings</h2><ul>{fd or '<li>None</li>'}</ul>
 </body></html>"""
     return HTMLResponse(html)
+
+
+@router.get("/{case_id}/pdf")
+def report_pdf(case_id: UUID, principal: Principal = Depends(get_principal)) -> Response:
+    """Minimal valid PDF export without heavy dependencies."""
+    data = _build_report_data(case_id)
+    lines = [
+        f"Spectra Report - {data['case']['name']}",
+        f"Case: {data['case']['id']}",
+        f"Status: {data['case']['status']}",
+        f"Auth: {data['scope']['auth_status']}  Network: {data['scope']['network_profile']}",
+        "AI inference is never labeled as FACT.",
+        "",
+        "Timeline:",
+    ]
+    for e in data["timeline"][:40]:
+        lines.append(f"- [{e['kind']}] {e['summary'][:80]}")
+    lines.append("")
+    lines.append("Evidence:")
+    for e in data["evidence"][:40]:
+        lines.append(f"- {e['title']}")
+    lines.append("")
+    lines.append("Findings:")
+    for f in data["findings"][:40]:
+        lines.append(f"- [{f['severity']}] {f['title']}")
+
+    content_ops = []
+    y = 750
+    for line in lines[:55]:
+        safe = line.replace("\\", "/").replace("(", "[").replace(")", "]")[:90]
+        content_ops.append(f"BT /F1 10 Tf 50 {y} Td ({safe}) Tj ET")
+        y -= 14
+        if y < 40:
+            break
+    stream = "\n".join(content_ops)
+    objs = []
+    objs.append("1 0 obj<< /Type /Catalog /Pages 2 0 R >>endobj\n")
+    objs.append("2 0 obj<< /Type /Pages /Kids [3 0 R] /Count 1 >>endobj\n")
+    objs.append(
+        "3 0 obj<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] "
+        "/Contents 4 0 R /Resources << /Font << /F1 5 0 R >> >> >>endobj\n"
+    )
+    objs.append(f"4 0 obj<< /Length {len(stream)} >>stream\n{stream}\nendstream endobj\n")
+    objs.append("5 0 obj<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>endobj\n")
+    pdf = "%PDF-1.4\n"
+    offsets = [0]
+    for o in objs:
+        offsets.append(len(pdf))
+        pdf += o
+    xref = len(pdf)
+    pdf += f"xref\n0 {len(objs)+1}\n0000000000 65535 f \n"
+    for off in offsets[1:]:
+        pdf += f"{off:010d} 00000 n \n"
+    pdf += f"trailer<< /Size {len(objs)+1} /Root 1 0 R >>\nstartxref\n{xref}\n%%EOF\n"
+    return Response(
+        content=pdf.encode("latin-1", errors="replace"),
+        media_type="application/pdf",
+        headers={"Content-Disposition": f'attachment; filename="spectra-{case_id}.pdf"'},
+    )
