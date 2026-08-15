@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from enum import Enum
 from typing import Any
 from uuid import UUID, uuid4
@@ -41,7 +41,19 @@ class EventType(str, Enum):
     GRAPH_RELATION_CREATED = "graph.relation_created"
     MEMORY_RETRIEVED = "memory.retrieved"
     MEMORY_ADDED = "memory.added"
+
     PLAN_UPDATED = "plan.updated"
+    GOAL_CREATED = "goal.created"
+    CAPABILITY_SELECTED = "capability.selected"
+    CAPABILITY_BLOCKED = "capability.blocked"
+    CAPABILITY_EXECUTED = "capability.executed"
+    CORRELATION_CREATED = "correlation.created"
+    INVESTIGATION_PAUSED = "investigation.paused"
+    INVESTIGATION_RESUMED = "investigation.resumed"
+    INVESTIGATION_FAILED = "investigation.failed"
+    CONTEXT_BUILT = "context.built"
+    AI_PLAN_VALIDATED = "ai.plan_validated"
+    AI_PLAN_REJECTED = "ai.plan_rejected"
     ERROR = "error"
     AUDIT = "audit"
 
@@ -53,6 +65,6 @@ class SpectraEvent(BaseModel):
     message: str = ""
     payload: dict[str, Any] = Field(default_factory=dict)
     actor: str = "system"
-    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
 
     model_config = {"from_attributes": True}
