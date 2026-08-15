@@ -1,5 +1,5 @@
 """Durable audit trail — never stores secrets."""
 
-from spectra.audit.service import AuditService, AuditEntry
+from spectra.audit.service import AuditEntry, AuditService
 
 __all__ = ["AuditService", "AuditEntry"]
