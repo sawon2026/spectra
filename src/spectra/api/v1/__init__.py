@@ -2,7 +2,18 @@
 
 from fastapi import APIRouter
 
-from spectra.api.v1 import cases, capabilities, events, findings, graph, health, providers, reports, timeline, workflows
+from spectra.api.v1 import (
+    capabilities,
+    cases,
+    events,
+    findings,
+    graph,
+    health,
+    providers,
+    reports,
+    timeline,
+    workflows,
+)
 
 api_router = APIRouter(prefix="/api/v1")
 api_router.include_router(health.router, tags=["health"])
