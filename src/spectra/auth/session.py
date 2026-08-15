@@ -167,7 +167,7 @@ class AuthService:
                     role = Role(str(row.role))
                 except ValueError:
                     role = Role.VIEWER
-                setattr(row, "last_seen_at", datetime.now(UTC))
+                row.last_seen_at = datetime.now(UTC)  # type: ignore[assignment]
                 return SessionInfo(
                     session_id=UUID(str(row.id)),
                     subject=str(row.subject),
@@ -197,7 +197,7 @@ class AuthService:
             row = db.query(SessionRow).filter(SessionRow.token_hash == th).first()
             if not row:
                 return False
-            setattr(row, "revoked_at", datetime.now(UTC))
+            row.revoked_at = datetime.now(UTC)  # type: ignore[assignment]
             return True
 
     def revoke_session(self, session_id: UUID) -> bool:
@@ -205,7 +205,7 @@ class AuthService:
             row = db.query(SessionRow).filter(SessionRow.id == session_id).first()
             if not row:
                 return False
-            setattr(row, "revoked_at", datetime.now(UTC))
+            row.revoked_at = datetime.now(UTC)  # type: ignore[assignment]
             return True
 
 
