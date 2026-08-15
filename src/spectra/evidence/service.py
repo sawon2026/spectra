@@ -34,6 +34,7 @@ class EvidenceService:
     def record(self, data: EvidenceCreate, *, verify_hash: bool = True) -> Evidence:
         content_hash = data.content_hash
         if data.artifact_path and self._case_root and verify_hash:
+            # Resolve only under case root — prevent path traversal
             candidate = (self._case_root / data.artifact_path).resolve()
             try:
                 candidate.relative_to(self._case_root.resolve())
