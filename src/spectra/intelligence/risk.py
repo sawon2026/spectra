@@ -7,7 +7,6 @@ from enum import Enum
 from pydantic import BaseModel, Field
 
 from spectra.intelligence.observation import Observation, ObservationStatus
-from spectra.knowledge.findings import FindingRecord, FindingState
 from spectra.models.finding import FindingSeverity
 
 
@@ -37,7 +36,7 @@ class RiskConfidenceEvaluator:
 
     def assess_finding(
         self,
-        finding: FindingRecord,
+        finding,  # FindingRecord — imported lazily to avoid circular import
         observations: list[Observation] | None = None,
         evidence_count: int = 0,
     ) -> RiskAssessment:
@@ -61,6 +60,8 @@ class RiskConfidenceEvaluator:
             rationale = "Critical demoted: insufficient confidence or evidence"
         else:
             rationale = "Deterministic assessment from evidence and observations"
+
+        from spectra.knowledge.findings import FindingState
 
         if finding.status == FindingState.FALSE_POSITIVE:
             conf = min(conf, 0.2)
