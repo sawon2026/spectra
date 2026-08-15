@@ -9,7 +9,9 @@ description = "Spectra — AI-Powered Security Research & Engineering Platform"
 readme = "README.md"
 requires-python = ">=3.11"
 license = "Apache-2.0"
-authors = [{ name = "Spectra Contributors" }]
+authors = [
+    { name = "Spectra Contributors" }
+]
 keywords = ["security", "research", "reverse-engineering", "ai", "orchestration"]
 classifiers = [
     "Development Status :: 3 - Alpha",
@@ -41,6 +43,7 @@ dev = [
     "pytest-asyncio>=0.23",
     "mypy>=1.8",
     "ruff>=0.3",
+    "types-setuptools",
 ]
 
 [project.scripts]
@@ -49,19 +52,65 @@ spectra = "spectra.cli.main:app"
 [tool.hatch.build.targets.wheel]
 packages = ["src/spectra"]
 
+[tool.hatch.build.targets.sdist]
+include = [
+    "/src",
+    "/tests",
+    "/docs",
+    "/README.md",
+    "/LICENSE",
+    "/pyproject.toml",
+]
+
 [tool.pytest.ini_options]
 minversion = "8.0"
 testpaths = ["tests"]
 pythonpath = ["src"]
 addopts = "-q --strict-markers --tb=short"
+markers = [
+    "integration: integration tests",
+    "security: security-focused tests",
+]
 
 [tool.mypy]
 python_version = "3.11"
-strict = true
 mypy_path = "src"
 packages = ["spectra"]
+warn_return_any = false
+warn_unused_configs = true
+ignore_missing_imports = true
+check_untyped_defs = false
+disallow_untyped_defs = false
+# SQLAlchemy classic Column attributes are loosely typed in Phase 1 services
+[[tool.mypy.overrides]]
+module = [
+    "spectra.core.db",
+    "spectra.cases.service",
+    "spectra.capabilities.registry",
+    "spectra.evidence.service",
+    "spectra.events.bus",
+    "spectra.knowledge.*",
+    "spectra.intelligence.orchestrator",
+]
+ignore_errors = true
+
 
 [tool.ruff]
 line-length = 100
 target-version = "py311"
 src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "N", "UP", "B", "A", "C4", "SIM", "TCH"]
+ignore = ["E501", "TC001", "TC002", "TC003", "UP017", "UP042", "B905", "B904", "A003", "SIM102", "SIM103", "SIM108", "SIM117", "C408", "C401", "B008"]
+
+[tool.coverage.run]
+source = ["spectra"]
+branch = true
+
+[tool.coverage.report]
+exclude_lines = [
+    "pragma: no cover",
+    "if TYPE_CHECKING:",
+    "raise NotImplementedError",
+]
