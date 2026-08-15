@@ -22,6 +22,7 @@ class StructuredTaskResponse(BaseModel):
     confidence: float = Field(default=0.5, ge=0.0, le=1.0)
     notes: str = Field(default="", max_length=2000)
 
+    # Explicitly reject command-like fields
     @classmethod
     def from_raw(cls, data: dict[str, Any]) -> StructuredTaskResponse:
         forbidden = {"command", "shell", "cmd", "exec", "bash", "powershell"}
