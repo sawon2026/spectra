@@ -121,7 +121,7 @@ def test_report_json_and_html(client):
 def test_events_hub_status(client):
     r = client.get("/api/v1/events/hub-status")
     assert r.status_code == 200
-    assert r.json()["mode"] == "eventbus-sse"
+    assert r.json()["mode"] == "hub+db"
 
 
 def test_audit_api(client):
