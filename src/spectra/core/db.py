@@ -98,16 +98,11 @@ class EvidenceRow(Base):
     case_id = Column(GUID(), nullable=False, index=True)
     title = Column(String(256), nullable=False)
     source_type = Column(String(32), nullable=False)
-    source_ref = Column(Text, default="")
     content_hash = Column(String(128), nullable=True)
-    artifact_path = Column(String(1024), nullable=True)
-    repro_command = Column(Text, default="")
     raw_excerpt = Column(Text, default="")
-    confidence = Column(Float, default=1.0)
-    tool_name = Column(String(128), nullable=True)
-    observed_at = Column(DateTime(timezone=True), nullable=False)
-    created_at = Column(DateTime(timezone=True), nullable=False)
+    file_path = Column(Text, nullable=True)
     metadata_ = Column("metadata", JSON, default=dict)
+    created_at = Column(DateTime(timezone=True), nullable=False)
 
 
 class FindingRow(Base):
@@ -116,17 +111,15 @@ class FindingRow(Base):
     id = Column(GUID(), primary_key=True)
     case_id = Column(GUID(), nullable=False, index=True)
     title = Column(String(256), nullable=False)
-    severity = Column(String(32), nullable=False)
-    status = Column(String(32), nullable=False)
-    category = Column(String(64), default="other")
-    evidence_ids = Column(JSON, default=list)
-    location = Column(String(512), default="")
-    impact = Column(Text, default="")
+    description = Column(Text, default="")
+    severity = Column(String(32), nullable=False, default="info")
+    status = Column(String(32), nullable=False, default="open")
     confidence = Column(Float, default=0.5)
-    remediation = Column(Text, default="")
+    evidence_quality = Column(Float, default=0.5)
+    evidence_ids = Column(JSON, default=list)
+    metadata_ = Column("metadata", JSON, default=dict)
     created_at = Column(DateTime(timezone=True), nullable=False)
     updated_at = Column(DateTime(timezone=True), nullable=False)
-    metadata_ = Column("metadata", JSON, default=dict)
 
 
 class EventRow(Base):
@@ -146,20 +139,14 @@ class CapabilityRow(Base):
 
     id = Column(GUID(), primary_key=True)
     name = Column(String(128), nullable=False, unique=True)
-    version = Column(String(32), default="0.1.0")
     category = Column(String(64), nullable=False)
-    description = Column(Text, default="")
-    supported_platforms = Column(JSON, default=list)
-    input_types = Column(JSON, default=list)
-    output_types = Column(JSON, default=list)
-    prerequisites = Column(JSON, default=list)
-    risk_level = Column(String(32), default="low")
+    risk_level = Column(String(32), nullable=False, default="low")
     requires_authorization = Column(Boolean, default=True)
-    execution_mode = Column(String(32), default="local")
-    default_timeout_seconds = Column(Float, default=300)
-    produces_evidence = Column(Boolean, default=True)
+    description = Column(Text, default="")
     health_status = Column(String(32), default="unknown")
     metadata_ = Column("metadata", JSON, default=dict)
+    created_at = Column(DateTime(timezone=True), nullable=False)
+    updated_at = Column(DateTime(timezone=True), nullable=False)
 
 
 _engine = None
@@ -171,35 +158,24 @@ def init_db(settings: SpectraSettings | None = None) -> None:
     settings = settings or get_settings()
     settings.ensure_data_dir()
     url = settings.get_database_url()
-    # SQLite safety: check_same_thread=False only when we manage sessions carefully
-    connect_args = {}
-    if url.startswith("sqlite"):
-        connect_args["check_same_thread"] = False
-    _engine = create_engine(url, connect_args=connect_args, future=True)
+    _engine = create_engine(url, connect_args={"check_same_thread": False} if url.startswith("sqlite") else {})
 
-    # Enable foreign keys for SQLite
-    if url.startswith("sqlite"):
-        @event.listens_for(_engine, "connect")
-        def set_sqlite_pragma(dbapi_conn, connection_record):  # type: ignore[no-untyped-def]
+    @event.listens_for(_engine, "connect")
+    def _set_sqlite_pragma(dbapi_conn, connection_record):  # type: ignore[no-untyped-def]
+        if url.startswith("sqlite"):
             cursor = dbapi_conn.cursor()
-            cursor.execute("PRAGMA foreign_keys=ON")
             cursor.execute("PRAGMA journal_mode=WAL")
+            cursor.execute("PRAGMA foreign_keys=ON")
             cursor.close()
 
     Base.metadata.create_all(_engine)
-    _SessionLocal = sessionmaker(bind=_engine, autoflush=False, autocommit=False, future=True)
-    logger.info("database_initialized", url=_safe_url(url))
-
-
-def _safe_url(url: str) -> str:
-    # Never log credentials if present
-    if "@" in url:
-        return url.split("@", 1)[-1]
-    return url
+    _SessionLocal = sessionmaker(bind=_engine, autoflush=False, autocommit=False, expire_on_commit=False)
+    logger.info("database_initialized", url=url)
 
 
 @contextmanager
 def get_session() -> Generator[Session, None, None]:
+    global _SessionLocal
     if _SessionLocal is None:
         init_db()
     assert _SessionLocal is not None
@@ -214,8 +190,7 @@ def get_session() -> Generator[Session, None, None]:
         session.close()
 
 
-def reset_db_for_tests(settings: SpectraSettings) -> None:
-    """Drop and recreate tables — only for tests."""
+def reset_db_for_tests(settings: SpectraSettings | None = None) -> None:
     global _engine, _SessionLocal
     if _engine is not None:
         Base.metadata.drop_all(_engine)
@@ -296,6 +271,66 @@ class MemoryEntryRow(Base):
     title = Column(String(256), nullable=False)
     content = Column(Text, default="")
     tags = Column(JSON, default=list)
-    features = Column(JSON, default=list)  # for deterministic similarity
+    features = Column(JSON, default=list)
     metadata_ = Column("metadata", JSON, default=dict)
+    created_at = Column(DateTime(timezone=True), nullable=False)
+
+
+class WorkflowRow(Base):
+    """Durable investigation workflow (Phase 6)."""
+
+    __tablename__ = "workflows"
+
+    id = Column(GUID(), primary_key=True)
+    case_id = Column(GUID(), nullable=False, index=True)
+    investigation_id = Column(GUID(), nullable=True, index=True)
+    task_id = Column(GUID(), nullable=True)
+    status = Column(String(32), nullable=False, default="created", index=True)
+    goal_json = Column(JSON, default=dict)
+    decision_history = Column(JSON, default=list)
+    observation_ids = Column(JSON, default=list)
+    evidence_refs = Column(JSON, default=list)
+    finding_ids = Column(JSON, default=list)
+    plan_revisions = Column(JSON, default=list)
+    retries = Column(JSON, default=dict)
+    last_step_id = Column(GUID(), nullable=True)
+    last_execution_token = Column(String(64), nullable=True)
+    recovery_notes = Column(Text, default="")
+    metadata_ = Column("metadata", JSON, default=dict)
+    created_at = Column(DateTime(timezone=True), nullable=False)
+    updated_at = Column(DateTime(timezone=True), nullable=False)
+
+
+class TimelineEntryRow(Base):
+    """Unified investigation timeline (Phase 6)."""
+
+    __tablename__ = "timeline_entries"
+
+    id = Column(GUID(), primary_key=True)
+    case_id = Column(GUID(), nullable=False, index=True)
+    investigation_id = Column(GUID(), nullable=True, index=True)
+    workflow_id = Column(GUID(), nullable=True, index=True)
+    kind = Column(String(32), nullable=False, index=True)
+    source = Column(String(128), default="system")
+    summary = Column(Text, default="")
+    confidence = Column(Float, nullable=True)
+    references = Column(JSON, default=list)
+    payload = Column(JSON, default=dict)
+    created_at = Column(DateTime(timezone=True), nullable=False)
+
+
+class ProvenanceLinkRow(Base):
+    """Evidence provenance chain edges (Phase 6)."""
+
+    __tablename__ = "provenance_links"
+
+    id = Column(GUID(), primary_key=True)
+    case_id = Column(GUID(), nullable=False, index=True)
+    from_kind = Column(String(32), nullable=False)
+    from_id = Column(GUID(), nullable=False, index=True)
+    to_kind = Column(String(32), nullable=False)
+    to_id = Column(GUID(), nullable=False, index=True)
+    relation = Column(String(64), nullable=False, default="produced")
+    content_hash = Column(String(128), nullable=True)
+    payload = Column(JSON, default=dict)
     created_at = Column(DateTime(timezone=True), nullable=False)
