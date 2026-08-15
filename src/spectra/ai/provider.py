@@ -42,6 +42,8 @@ class ProviderInfo:
 
 
 class StructuredTaskResponse(BaseModel):
+    """Validated structured output from a model — not executable commands."""
+
     task_type: TaskType = TaskType.UNKNOWN
     artifact_type: ArtifactType = ArtifactType.UNKNOWN
     objectives: list[str] = Field(default_factory=list)
@@ -61,6 +63,8 @@ class StructuredTaskResponse(BaseModel):
 
 
 class LLMProvider(ABC):
+    """Provider-independent interface. Implementations must not execute tools."""
+
     name: str = "base"
 
     @abstractmethod
@@ -68,6 +72,7 @@ class LLMProvider(ABC):
         ...
 
     def plan(self, goal: str, context: dict[str, Any] | None = None) -> AIPlanResponse:
+        """Optional structured planning. Default raises — use deterministic planner."""
         raise RuntimeError(f"Provider {self.name} does not support planning")
 
     def is_configured(self) -> bool:
@@ -84,6 +89,8 @@ class LLMProvider(ABC):
 
 
 class NullLLMProvider(LLMProvider):
+    """Default provider — always offline / not configured."""
+
     name = "null"
 
     def classify_task(self, text: str) -> StructuredTaskResponse:
@@ -104,6 +111,12 @@ class NullLLMProvider(LLMProvider):
 
 
 class OpenAICompatibleProvider(LLMProvider):
+    """Optional OpenAI-compatible HTTP provider (Chat Completions JSON mode).
+
+    Requires SPECTRA_MODEL_API_KEY and SPECTRA_MODEL_API_BASE (or defaults).
+    Never executes tools; validates all outputs through schema gates.
+    """
+
     name = "openai_compatible"
 
     def __init__(
@@ -142,7 +155,8 @@ class OpenAICompatibleProvider(LLMProvider):
         prompt = (
             "Classify this security research task. Respond with JSON only containing: "
             "task_type, artifact_type, objectives, requested_capabilities, risk_level, "
-            "network_required, confidence, notes. Never include command/shell fields.\n\n"
+            "network_required, confidence, notes. "
+            "Never include command, shell, bash, or exec fields.\n\n"
             f"Task: {text[:2000]}"
         )
         data = self._chat_json(prompt)
@@ -152,7 +166,9 @@ class OpenAICompatibleProvider(LLMProvider):
         ctx = json.dumps(context or {}, default=str)[:4000]
         prompt = (
             "Propose a structured security research plan as JSON with fields: "
-            "goal, reasoning_summary, proposed_steps, capability_requests, confidence, assumptions. "
+            "goal, reasoning_summary, proposed_steps (list of {capability, objective, inputs}), "
+            "capability_requests, confidence, assumptions. "
+            "Capabilities must be tool names only (e.g. hash-compute, file-info). "
             "Never include command, shell, bash, authorization, or policy fields.\n\n"
             f"Goal: {goal[:1500]}\nContext: {ctx}"
         )
@@ -167,7 +183,10 @@ class OpenAICompatibleProvider(LLMProvider):
             "messages": [
                 {
                     "role": "system",
-                    "content": "You are a security research assistant for Spectra. Output strict JSON only. Never propose shell commands.",
+                    "content": (
+                        "You are a security research assistant for Spectra. "
+                        "Output strict JSON only. Never propose shell commands."
+                    ),
                 },
                 {"role": "user", "content": user_prompt},
             ],
@@ -216,10 +235,13 @@ class OpenAICompatibleProvider(LLMProvider):
 
 
 class ProviderRegistry:
+    """Discover and select LLM providers with offline fallback."""
+
     def __init__(self) -> None:
         self._providers: dict[str, LLMProvider] = {}
         self.register(NullLLMProvider())
-        self.register(OpenAICompatibleProvider())
+        oai = OpenAICompatibleProvider()
+        self.register(oai)
 
     def register(self, provider: LLMProvider) -> None:
         self._providers[provider.name] = provider
@@ -231,6 +253,7 @@ class ProviderRegistry:
         return [p.info() for p in self._providers.values()]
 
     def active(self) -> LLMProvider:
+        """Prefer a configured non-null provider; else null."""
         for name, p in self._providers.items():
             if name != "null" and p.is_configured():
                 return p
@@ -241,6 +264,7 @@ class ProviderRegistry:
 
 
 def parse_model_json(raw: str | dict[str, Any]) -> StructuredTaskResponse:
+    """Parse and validate model output; reject malformed / command-bearing payloads."""
     if isinstance(raw, str):
         try:
             data = json.loads(raw)
@@ -253,4 +277,4 @@ def parse_model_json(raw: str | dict[str, Any]) -> StructuredTaskResponse:
     try:
         return StructuredTaskResponse.from_raw(data)
     except ValidationError as exc:
-        raise ValueError(f"Invalid structured task: {exc}") from exp if False else ValueError(f"Invalid structured task: {exc}") from exc
+        raise ValueError(f"Invalid structured task: {exc}") from exc
