@@ -7,29 +7,32 @@ from datetime import UTC, datetime
 from typing import Any
 from uuid import UUID
 
-from spectra.core.config import SpectraSettings, get_settings
 from spectra.core.logging import get_logger
+from spectra.events.bus import EventBus
+from spectra.models.events import EventType, SpectraEvent
 from spectra.models.scope import AuthStatus, NetworkProfile, Scope
 
 logger = get_logger(__name__)
 
 
-@dataclass
+@dataclass(frozen=True)
 class PolicyDecision:
     allowed: bool
     reason: str
-    code: str = "ok"
+    activity: str
+    case_id: UUID | None = None
     details: dict[str, Any] | None = None
 
 
 class PolicyEngine:
-    """Evaluates whether an activity is authorized for a given scope.
+    """Hard gate for any potentially impactful action.
 
-    This engine is intentionally deterministic and free of AI influence.
+    AI planners may *request* actions; this engine alone decides whether
+    they may proceed. Decisions are logged as audit events.
     """
 
-    def __init__(self, settings: SpectraSettings | None = None) -> None:
-        self.settings = settings or get_settings()
+    def __init__(self, event_bus: EventBus | None = None) -> None:
+        self._bus = event_bus
 
     def evaluate(
         self,
@@ -41,81 +44,146 @@ class PolicyEngine:
         risk_level: str = "low",
         case_id: UUID | None = None,
     ) -> PolicyDecision:
-        if not self.settings.require_scope_for_execution and not self.settings.policy_strict:
-            # Explicit non-strict mode still requires scope when require_scope is True
-            pass
-
         if scope is None:
-            return PolicyDecision(
+            decision = PolicyDecision(
                 allowed=False,
-                reason="No scope defined for this case; authorization required before execution",
-                code="no_scope",
+                reason="No scope defined for this case. Create and authorize a scope before acting.",
+                activity=activity,
+                case_id=case_id,
             )
+            self._emit(decision)
+            return decision
 
         if scope.auth_status != AuthStatus.GRANTED:
-            return PolicyDecision(
+            decision = PolicyDecision(
                 allowed=False,
-                reason=f"Authorization status is '{scope.auth_status.value}', not 'granted'",
-                code="auth_not_granted",
+                reason=f"Authorization status is '{scope.auth_status.value}', required 'granted'.",
+                activity=activity,
+                case_id=scope.case_id,
             )
+            self._emit(decision)
+            return decision
 
         if not scope.ready_for_act:
-            return PolicyDecision(
+            decision = PolicyDecision(
                 allowed=False,
-                reason="Scope is not ready_for_act (auth must be granted and status ready)",
-                code="not_ready",
+                reason="Scope is not marked ready_for_act. Complete the authorization checklist.",
+                activity=activity,
+                case_id=scope.case_id,
             )
+            self._emit(decision)
+            return decision
 
-        # Time window
         now = datetime.now(UTC)
         if scope.time_window_start and now < scope.time_window_start:
-            return PolicyDecision(allowed=False, reason="Current time is before scope time window", code="before_window")
+            decision = PolicyDecision(
+                allowed=False,
+                reason="Current time is before the authorized time window.",
+                activity=activity,
+                case_id=scope.case_id,
+            )
+            self._emit(decision)
+            return decision
         if scope.time_window_end and now > scope.time_window_end:
-            return PolicyDecision(allowed=False, reason="Current time is after scope time window", code="after_window")
+            decision = PolicyDecision(
+                allowed=False,
+                reason="Authorized time window has expired.",
+                activity=activity,
+                case_id=scope.case_id,
+            )
+            self._emit(decision)
+            return decision
 
-        # Forbidden activities
         if activity in scope.forbidden_activities:
-            return PolicyDecision(
+            decision = PolicyDecision(
                 allowed=False,
-                reason=f"Activity '{activity}' is explicitly forbidden in scope",
-                code="forbidden",
+                reason=f"Activity '{activity}' is explicitly forbidden in scope.",
+                activity=activity,
+                case_id=scope.case_id,
             )
+            self._emit(decision)
+            return decision
 
-        # Allowed activities (if list non-empty, must be listed)
         if scope.allowed_activities and activity not in scope.allowed_activities:
-            return PolicyDecision(
+            decision = PolicyDecision(
                 allowed=False,
-                reason=f"Activity '{activity}' is not in allowed_activities",
-                code="not_allowed",
+                reason=f"Activity '{activity}' is not in the allowed_activities list.",
+                activity=activity,
+                case_id=scope.case_id,
             )
+            self._emit(decision)
+            return decision
 
-        # Asset scope
-        if asset_identifier and scope.in_scope_assets:
-            ids = {a.identifier for a in scope.in_scope_assets}
-            # Also check path basename match for convenience
-            from pathlib import Path
-
-            base = Path(asset_identifier).name
-            if asset_identifier not in ids and base not in ids:
-                return PolicyDecision(
+        if asset_identifier is not None:
+            out_ids = {a.identifier for a in scope.out_of_scope_assets}
+            if asset_identifier in out_ids:
+                decision = PolicyDecision(
                     allowed=False,
-                    reason=f"Asset '{asset_identifier}' is not in scope",
-                    code="asset_out_of_scope",
+                    reason=f"Asset '{asset_identifier}' is explicitly out of scope.",
+                    activity=activity,
+                    case_id=scope.case_id,
                 )
+                self._emit(decision)
+                return decision
+            in_ids = {a.identifier for a in scope.in_scope_assets}
+            if in_ids and asset_identifier not in in_ids:
+                decision = PolicyDecision(
+                    allowed=False,
+                    reason=f"Asset '{asset_identifier}' is not in the in_scope list.",
+                    activity=activity,
+                    case_id=scope.case_id,
+                )
+                self._emit(decision)
+                return decision
 
-        # Network profile
         if network_required:
             if scope.network_profile == NetworkProfile.OFFLINE:
-                return PolicyDecision(
+                decision = PolicyDecision(
                     allowed=False,
-                    reason="Network required but scope network_profile is offline",
-                    code="network_offline",
+                    reason="Network activity is required but network_profile is 'offline'.",
+                    activity=activity,
+                    case_id=scope.case_id,
                 )
+                self._emit(decision)
+                return decision
 
-        logger.info(
-            "policy_allowed",
+        # High/critical risk actions still require granted + ready (already checked)
+        decision = PolicyDecision(
+            allowed=True,
+            reason="Policy checks passed.",
             activity=activity,
-            case_id=str(case_id or scope.case_id),
-            risk_level=risk_level,
+            case_id=scope.case_id,
+            details={"risk_level": risk_level, "network_required": network_required},
         )
-        return PolicyDecision(allowed=True, reason="Policy checks passed", code="ok")
+        self._emit(decision, denied=False)
+        return decision
+
+    def _emit(self, decision: PolicyDecision, denied: bool = True) -> None:
+        event_type = EventType.POLICY_DENIED if not decision.allowed else EventType.POLICY_CHECK
+        if self._bus:
+            self._bus.publish(
+                SpectraEvent(
+                    event_type=event_type,
+                    case_id=decision.case_id,
+                    message=decision.reason,
+                    payload={
+                        "activity": decision.activity,
+                        "allowed": decision.allowed,
+                        "details": decision.details or {},
+                    },
+                    actor="policy_engine",
+                )
+            )
+        if not decision.allowed:
+            logger.warning(
+                "policy_denied",
+                activity=decision.activity,
+                reason=decision.reason,
+                case_id=str(decision.case_id) if decision.case_id else None,
+            )
+        else:
+            logger.info(
+                "policy_allowed",
+                activity=decision.activity,
+                case_id=str(decision.case_id) if decision.case_id else None,
+            )
