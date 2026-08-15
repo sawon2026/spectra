@@ -98,11 +98,16 @@ class EvidenceRow(Base):
     case_id = Column(GUID(), nullable=False, index=True)
     title = Column(String(256), nullable=False)
     source_type = Column(String(32), nullable=False)
+    source_ref = Column(Text, default="")
     content_hash = Column(String(128), nullable=True)
+    artifact_path = Column(String(1024), nullable=True)
+    repro_command = Column(Text, default="")
     raw_excerpt = Column(Text, default="")
-    file_path = Column(Text, nullable=True)
-    metadata_ = Column("metadata", JSON, default=dict)
+    confidence = Column(Float, default=1.0)
+    tool_name = Column(String(128), nullable=True)
+    observed_at = Column(DateTime(timezone=True), nullable=False)
     created_at = Column(DateTime(timezone=True), nullable=False)
+    metadata_ = Column("metadata", JSON, default=dict)
 
 
 class FindingRow(Base):
@@ -111,15 +116,17 @@ class FindingRow(Base):
     id = Column(GUID(), primary_key=True)
     case_id = Column(GUID(), nullable=False, index=True)
     title = Column(String(256), nullable=False)
-    description = Column(Text, default="")
-    severity = Column(String(32), nullable=False, default="info")
-    status = Column(String(32), nullable=False, default="open")
-    confidence = Column(Float, default=0.5)
-    evidence_quality = Column(Float, default=0.5)
+    severity = Column(String(32), nullable=False)
+    status = Column(String(32), nullable=False)
+    category = Column(String(64), default="other")
     evidence_ids = Column(JSON, default=list)
-    metadata_ = Column("metadata", JSON, default=dict)
+    location = Column(String(512), default="")
+    impact = Column(Text, default="")
+    confidence = Column(Float, default=0.5)
+    remediation = Column(Text, default="")
     created_at = Column(DateTime(timezone=True), nullable=False)
     updated_at = Column(DateTime(timezone=True), nullable=False)
+    metadata_ = Column("metadata", JSON, default=dict)
 
 
 class EventRow(Base):
@@ -139,14 +146,20 @@ class CapabilityRow(Base):
 
     id = Column(GUID(), primary_key=True)
     name = Column(String(128), nullable=False, unique=True)
+    version = Column(String(32), default="0.1.0")
     category = Column(String(64), nullable=False)
-    risk_level = Column(String(32), nullable=False, default="low")
-    requires_authorization = Column(Boolean, default=True)
     description = Column(Text, default="")
+    supported_platforms = Column(JSON, default=list)
+    input_types = Column(JSON, default=list)
+    output_types = Column(JSON, default=list)
+    prerequisites = Column(JSON, default=list)
+    risk_level = Column(String(32), default="low")
+    requires_authorization = Column(Boolean, default=True)
+    execution_mode = Column(String(32), default="local")
+    default_timeout_seconds = Column(Float, default=300)
+    produces_evidence = Column(Boolean, default=True)
     health_status = Column(String(32), default="unknown")
     metadata_ = Column("metadata", JSON, default=dict)
-    created_at = Column(DateTime(timezone=True), nullable=False)
-    updated_at = Column(DateTime(timezone=True), nullable=False)
 
 
 _engine = None
@@ -158,24 +171,33 @@ def init_db(settings: SpectraSettings | None = None) -> None:
     settings = settings or get_settings()
     settings.ensure_data_dir()
     url = settings.get_database_url()
-    _engine = create_engine(url, connect_args={"check_same_thread": False} if url.startswith("sqlite") else {})
+    connect_args = {}
+    if url.startswith("sqlite"):
+        connect_args["check_same_thread"] = False
+    _engine = create_engine(url, connect_args=connect_args, future=True)
 
-    @event.listens_for(_engine, "connect")
-    def _set_sqlite_pragma(dbapi_conn, connection_record):  # type: ignore[no-untyped-def]
-        if url.startswith("sqlite"):
+    if url.startswith("sqlite"):
+
+        @event.listens_for(_engine, "connect")
+        def set_sqlite_pragma(dbapi_conn, connection_record):  # type: ignore[no-untyped-def]
             cursor = dbapi_conn.cursor()
-            cursor.execute("PRAGMA journal_mode=WAL")
             cursor.execute("PRAGMA foreign_keys=ON")
+            cursor.execute("PRAGMA journal_mode=WAL")
             cursor.close()
 
     Base.metadata.create_all(_engine)
-    _SessionLocal = sessionmaker(bind=_engine, autoflush=False, autocommit=False, expire_on_commit=False)
-    logger.info("database_initialized", url=url)
+    _SessionLocal = sessionmaker(bind=_engine, autoflush=False, autocommit=False, future=True)
+    logger.info("database_initialized", url=_safe_url(url))
+
+
+def _safe_url(url: str) -> str:
+    if "@" in url:
+        return url.split("@", 1)[-1]
+    return url
 
 
 @contextmanager
 def get_session() -> Generator[Session, None, None]:
-    global _SessionLocal
     if _SessionLocal is None:
         init_db()
     assert _SessionLocal is not None
@@ -190,7 +212,8 @@ def get_session() -> Generator[Session, None, None]:
         session.close()
 
 
-def reset_db_for_tests(settings: SpectraSettings | None = None) -> None:
+def reset_db_for_tests(settings: SpectraSettings) -> None:
+    """Drop and recreate tables — only for tests."""
     global _engine, _SessionLocal
     if _engine is not None:
         Base.metadata.drop_all(_engine)
