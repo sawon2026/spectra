@@ -2,140 +2,199 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
-from typing import Any, Optional
-from uuid import uuid4
+from datetime import UTC, datetime
+from uuid import UUID
 
-from sqlalchemy.orm import Session
+from spectra.core.db import CaseRow, ScopeRow, get_session
+from spectra.core.logging import get_logger
+from spectra.events.bus import EventBus
+from spectra.models.case import Case, CaseCreate, CaseStatus
+from spectra.models.events import EventType, SpectraEvent
+from spectra.models.scope import AuthStatus, NetworkProfile, Scope, ScopeAsset, ScopeCreate
 
-from spectra.core.db import CaseRow, ScopeRow, get_session, session_scope
-from spectra.models.case import Case, CaseStatus
-from spectra.models.scope import Scope, ScopeStatus
-
-
-def _utcnow() -> datetime:
-    return datetime.now(timezone.utc)
+logger = get_logger(__name__)
 
 
 class CaseService:
-    """CRUD and lifecycle for investigation cases."""
+    def __init__(self, event_bus: EventBus | None = None) -> None:
+        self._bus = event_bus or EventBus()
 
-    def create(
-        self,
-        name: str,
-        description: str | None = None,
-        metadata: dict[str, Any] | None = None,
-    ) -> Case:
-        case_id = str(uuid4())
-        now = _utcnow()
+    def create(self, data: CaseCreate) -> Case:
+        case = Case(
+            name=data.name,
+            description=data.description,
+            project_id=data.project_id,
+            tags=data.tags,
+            status=CaseStatus.DRAFT,
+        )
         with get_session() as session:
+            # uniqueness check
+            existing = session.query(CaseRow).filter(CaseRow.name == case.name).first()
+            if existing:
+                raise ValueError(f"Case with name '{case.name}' already exists")
             row = CaseRow(
-                id=case_id,
-                name=name,
-                description=description,
-                status=CaseStatus.OPEN.value,
-                created_at=now,
-                updated_at=now,
-                metadata_=metadata or {},
+                id=case.id,
+                name=case.name,
+                description=case.description,
+                status=case.status.value,
+                project_id=case.project_id,
+                tags=case.tags,
+                created_at=case.created_at,
+                updated_at=case.updated_at,
+                closed_at=case.closed_at,
+                metadata_=case.metadata,
             )
             session.add(row)
-            session.flush()
-            return self._to_model(row)
+        self._bus.publish(
+            SpectraEvent(
+                event_type=EventType.CASE_CREATED,
+                case_id=case.id,
+                message=f"Case '{case.name}' created",
+                payload={"name": case.name},
+                actor="case_service",
+            )
+        )
+        logger.info("case_created", case_id=str(case.id), name=case.name)
+        return case
 
-    def get(self, case_id: str) -> Case | None:
+    def get(self, case_id: UUID) -> Case | None:
         with get_session() as session:
-            row = session.get(CaseRow, case_id)
-            if row is None:
+            row = session.query(CaseRow).filter(CaseRow.id == case_id).first()
+            if not row:
                 return None
             return self._to_model(row)
 
-    def list(self, limit: int = 100) -> list[Case]:
+    def get_by_name(self, name: str) -> Case | None:
         with get_session() as session:
-            rows = session.query(CaseRow).order_by(CaseRow.created_at.desc()).limit(limit).all()
+            row = session.query(CaseRow).filter(CaseRow.name == name).first()
+            if not row:
+                return None
+            return self._to_model(row)
+
+    def list_cases(self, status: CaseStatus | None = None, limit: int = 50) -> list[Case]:
+        with get_session() as session:
+            q = session.query(CaseRow).order_by(CaseRow.created_at.desc())
+            if status:
+                q = q.filter(CaseRow.status == status.value)
+            rows = q.limit(limit).all()
             return [self._to_model(r) for r in rows]
 
-    def update_status(self, case_id: str, status: CaseStatus | str) -> Case | None:
-        status_val = status.value if isinstance(status, CaseStatus) else status
+    def update_status(self, case_id: UUID, status: CaseStatus) -> Case:
         with get_session() as session:
-            row = session.get(CaseRow, case_id)
-            if row is None:
-                return None
-            row.status = status_val
-            row.updated_at = _utcnow()
+            row = session.query(CaseRow).filter(CaseRow.id == case_id).first()
+            if not row:
+                raise ValueError(f"Case {case_id} not found")
+            row.status = status.value
+            row.updated_at = datetime.now(UTC)
+            if status == CaseStatus.CLOSED:
+                row.closed_at = datetime.now(UTC)
             session.flush()
-            return self._to_model(row)
-
-    def set_scope(
-        self,
-        case_id: str,
-        authorized_targets: list[str] | None = None,
-        authorized_actions: list[str] | None = None,
-        notes: str | None = None,
-        status: ScopeStatus | str = ScopeStatus.PENDING,
-    ) -> Scope | None:
-        status_val = status.value if isinstance(status, ScopeStatus) else status
-        with get_session() as session:
-            case = session.get(CaseRow, case_id)
-            if case is None:
-                return None
-            existing = (
-                session.query(ScopeRow).filter(ScopeRow.case_id == case_id).order_by(ScopeRow.created_at.desc()).first()
-            )
-            now = _utcnow()
-            if existing:
-                existing.status = status_val
-                if authorized_targets is not None:
-                    existing.authorized_targets = authorized_targets
-                if authorized_actions is not None:
-                    existing.authorized_actions = authorized_actions
-                if notes is not None:
-                    existing.notes = notes
-                existing.updated_at = now
-                session.flush()
-                return self._scope_to_model(existing)
-            scope_id = str(uuid4())
-            row = ScopeRow(
-                id=scope_id,
+            case = self._to_model(row)
+        self._bus.publish(
+            SpectraEvent(
+                event_type=EventType.CASE_UPDATED,
                 case_id=case_id,
-                status=status_val,
-                authorized_targets=authorized_targets or [],
-                authorized_actions=authorized_actions or [],
-                notes=notes,
-                created_at=now,
-                updated_at=now,
+                message=f"Status changed to {status.value}",
+                payload={"status": status.value},
+                actor="case_service",
+            )
+        )
+        return case
+
+    def set_scope(self, data: ScopeCreate) -> Scope:
+        scope = Scope(
+            case_id=data.case_id,
+            auth_status=data.auth_status,
+            auth_basis=data.auth_basis,
+            auth_evidence=data.auth_evidence,
+            in_scope_assets=data.in_scope_assets,
+            out_of_scope_assets=data.out_of_scope_assets,
+            allowed_activities=data.allowed_activities,
+            forbidden_activities=data.forbidden_activities,
+            network_profile=data.network_profile,
+            time_window_start=data.time_window_start,
+            time_window_end=data.time_window_end,
+            notes=data.notes,
+            ready_for_act=False,
+        )
+        # Auto-set ready only when fully authorized and assets present or offline
+        if (
+            scope.auth_status == AuthStatus.GRANTED
+            and (scope.in_scope_assets or scope.network_profile == NetworkProfile.OFFLINE)
+        ):
+            scope.ready_for_act = True
+
+        with get_session() as session:
+            # replace existing scope for case
+            session.query(ScopeRow).filter(ScopeRow.case_id == data.case_id).delete()
+            row = ScopeRow(
+                id=scope.id,
+                case_id=scope.case_id,
+                auth_status=scope.auth_status.value,
+                auth_basis=scope.auth_basis,
+                auth_evidence=scope.auth_evidence,
+                in_scope_assets=[a.model_dump() for a in scope.in_scope_assets],
+                out_of_scope_assets=[a.model_dump() for a in scope.out_of_scope_assets],
+                allowed_activities=scope.allowed_activities,
+                forbidden_activities=scope.forbidden_activities,
+                network_profile=scope.network_profile.value,
+                time_window_start=scope.time_window_start,
+                time_window_end=scope.time_window_end,
+                ready_for_act=scope.ready_for_act,
+                notes=scope.notes,
+                created_at=scope.created_at,
+                updated_at=scope.updated_at,
+                metadata_=scope.metadata,
             )
             session.add(row)
-            session.flush()
-            return self._scope_to_model(row)
-
-    def get_scope(self, case_id: str) -> Scope | None:
-        with get_session() as session:
-            row = (
-                session.query(ScopeRow).filter(ScopeRow.case_id == case_id).order_by(ScopeRow.created_at.desc()).first()
+        event = EventType.SCOPE_READY if scope.ready_for_act else EventType.SCOPE_CREATED
+        self._bus.publish(
+            SpectraEvent(
+                event_type=event,
+                case_id=scope.case_id,
+                message=f"Scope set (auth={scope.auth_status.value}, ready={scope.ready_for_act})",
+                payload={"auth_status": scope.auth_status.value, "ready_for_act": scope.ready_for_act},
+                actor="case_service",
             )
-            if row is None:
-                return None
-            return self._scope_to_model(row)
+        )
+        return scope
 
-    def _to_model(self, row: CaseRow) -> Case:
+    def get_scope(self, case_id: UUID) -> Scope | None:
+        with get_session() as session:
+            row = session.query(ScopeRow).filter(ScopeRow.case_id == case_id).first()
+            if not row:
+                return None
+            return Scope(
+                id=row.id,
+                case_id=row.case_id,
+                auth_status=AuthStatus(row.auth_status),
+                auth_basis=row.auth_basis or "",
+                auth_evidence=row.auth_evidence or "",
+                in_scope_assets=[ScopeAsset(**a) for a in (row.in_scope_assets or [])],
+                out_of_scope_assets=[ScopeAsset(**a) for a in (row.out_of_scope_assets or [])],
+                allowed_activities=row.allowed_activities or [],
+                forbidden_activities=row.forbidden_activities or [],
+                network_profile=NetworkProfile(row.network_profile),
+                time_window_start=row.time_window_start,
+                time_window_end=row.time_window_end,
+                ready_for_act=bool(row.ready_for_act),
+                notes=row.notes or "",
+                created_at=row.created_at,
+                updated_at=row.updated_at,
+                metadata=row.metadata_ or {},
+            )
+
+    @staticmethod
+    def _to_model(row: CaseRow) -> Case:
         return Case(
             id=row.id,
             name=row.name,
-            description=row.description,
-            status=row.status,
+            description=row.description or "",
+            status=CaseStatus(row.status),
+            project_id=row.project_id,
+            tags=row.tags or [],
             created_at=row.created_at,
             updated_at=row.updated_at,
+            closed_at=row.closed_at,
             metadata=row.metadata_ or {},
-        )
-
-    def _scope_to_model(self, row: ScopeRow) -> Scope:
-        return Scope(
-            id=row.id,
-            case_id=row.case_id,
-            status=row.status,
-            authorized_targets=row.authorized_targets or [],
-            authorized_actions=row.authorized_actions or [],
-            notes=row.notes,
-            created_at=row.created_at,
-            updated_at=row.updated_at,
         )
