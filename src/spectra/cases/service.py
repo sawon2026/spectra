@@ -179,13 +179,12 @@ class CaseService:
 
     def _scope_from_row(self, row: ScopeRow) -> Scope:
         def _assets(raw):
+            from contextlib import suppress
             out = []
             for a in raw or []:
                 if isinstance(a, dict):
-                    try:
+                    with suppress(Exception):
                         out.append(ScopeAsset(**a))
-                    except Exception:
-                        pass
             return out
 
         return Scope(
