@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import uuid
+
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
@@ -34,13 +36,23 @@ def create_app() -> FastAPI:
         allow_methods=["*"],
         allow_headers=["*"],
     )
+
+    @app.middleware("http")
+    async def request_id_middleware(request: Request, call_next):  # type: ignore[no-untyped-def]
+        rid = request.headers.get("X-Request-ID") or str(uuid.uuid4())
+        request.state.request_id = rid
+        response = await call_next(request)
+        response.headers["X-Request-ID"] = rid
+        return response
+
     app.include_router(api_router)
 
     @app.exception_handler(Exception)
     async def unhandled(request: Request, exc: Exception) -> JSONResponse:
+        rid = getattr(request.state, "request_id", None)
         return JSONResponse(
             status_code=500,
-            content={"detail": "Internal error", "code": "internal"},
+            content={"detail": "Internal error", "code": "internal", "request_id": rid},
         )
 
     @app.get("/")
