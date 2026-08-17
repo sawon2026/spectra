@@ -5,9 +5,14 @@
 ```
 Interfaces: CLI (Phase 1) · API/UI (later)
 Intelligence (Phase 2)
-  Classifier → State → Planner → Observation → Replan
-  * Requests capability executions only
-  * Never runs unrestricted shell
+  Classifier → State → Planner → Orchestrator
+Application Services
+  Cases · Evidence · Findings · Timeline · Workflows
+  Auth · Audit · Events · Reporting
+Policy + Capabilities
+  PolicyEngine (sole execution gate)
+  CapabilityRegistry · Tool Adapters
+  Controlled Execution (shell=False, allowlist, metachar block)
 Core (Phase 1)
   PolicyEngine · Cases · Scope · Evidence · Events
   CapabilityRegistry · Tool Adapters · Controlled Exec
@@ -47,3 +52,25 @@ Task text
 - Web UI
 - Plugin marketplace
 - Dozens of tool integrations
+
+## Phase 10 — Product surface & platform maturity
+
+Phase 10 completes the professional investigation UI surface against the existing APIs and hardens release engineering.
+
+**Implemented**
+- Web UI pages consume real `/api/v1` data (cases, evidence, findings, timeline, reports, capabilities, providers, settings, dashboard, case detail, graph).
+- Typed API client (`web/lib/api.ts`); no browser-side tool execution.
+- Cases list pagination: `limit` (1–500, default 50) and `offset` (≥0).
+- Lightweight schema versioning (`SchemaVersionRow`, `SCHEMA_VERSION=10`) via idempotent `ensure_schema` on startup — SQLite-compatible, non-destructive.
+- CI frontend job: `npm ci` (or install fallback), `typecheck`, `build`.
+- Investigation depth APIs already present (graph, timeline, findings, workflows, provenance paths).
+
+**Invariants preserved**
+- PolicyEngine remains the sole execution gate.
+- Authentication ≠ authorization for capability execution.
+- UI → API → services → PolicyEngine → controlled adapters only.
+
+**Not claimed**
+- Full Alembic migration history (baseline stamp only; Alembic optional later).
+- Multi-tenant authz beyond current principal model.
+- Production-scale search/indexing.

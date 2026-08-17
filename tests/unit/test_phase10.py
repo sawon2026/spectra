@@ -64,3 +64,27 @@ def test_schema_version_recorded(db, settings):
     v = ensure_schema(settings)
     assert v == SCHEMA_VERSION
     assert current_schema_version() == SCHEMA_VERSION
+
+
+def test_cases_offset(client):
+    for i in range(5):
+        assert client.post("/api/v1/cases", json={"name": f"p10-off-{i}"}).status_code == 201
+    r0 = client.get("/api/v1/cases?limit=2&offset=0")
+    r1 = client.get("/api/v1/cases?limit=2&offset=2")
+    assert r0.status_code == 200 and r1.status_code == 200
+    ids0 = {c["id"] for c in r0.json()}
+    ids1 = {c["id"] for c in r1.json()}
+    assert len(ids0) <= 2 and len(ids1) <= 2
+    # offsets should generally return different sets when enough cases exist
+    assert ids0.isdisjoint(ids1) or len(ids0) < 2
+
+
+def test_cases_offset_validation(client):
+    assert client.get("/api/v1/cases?offset=-1").status_code == 422
+    assert client.get("/api/v1/cases?offset=0&limit=10").status_code == 200
+
+
+def test_cases_empty_with_high_offset(client):
+    r = client.get("/api/v1/cases?limit=10&offset=100000")
+    assert r.status_code == 200
+    assert r.json() == []
