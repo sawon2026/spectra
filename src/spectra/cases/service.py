@@ -84,6 +84,28 @@ class CaseService:
             rows = q.offset(max(0, offset)).limit(limit).all()
             return [self._to_model(r) for r in rows]
 
+    def update_status(self, case_id: UUID, status: CaseStatus) -> Case:
+        with get_session() as session:
+            row = session.query(CaseRow).filter(CaseRow.id == case_id).first()
+            if not row:
+                raise ValueError(f"Case {case_id} not found")
+            row.status = status.value
+            row.updated_at = datetime.now(UTC)
+            if status == CaseStatus.CLOSED:
+                row.closed_at = datetime.now(UTC)
+            session.flush()
+            case = self._to_model(row)
+        self._bus.publish(
+            SpectraEvent(
+                event_type=EventType.CASE_UPDATED,
+                case_id=case_id,
+                message=f"Status changed to {status.value}",
+                payload={"status": status.value},
+                actor="case_service",
+            )
+        )
+        return case
+
     def set_scope(self, data: ScopeCreate) -> Scope:
         scope = Scope(
             case_id=data.case_id,
