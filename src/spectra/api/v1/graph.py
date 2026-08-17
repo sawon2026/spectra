@@ -62,3 +62,62 @@ def list_edges(
             )
             for r in rows
         ]
+
+
+@router.get("/neighbors/{node_id}")
+def node_neighbors(
+    node_id: UUID,
+    principal: Principal = Depends(get_principal),
+    depth: int = Query(default=1, ge=1, le=3),
+    limit: int = Query(default=50, ge=1, le=200),
+) -> dict:
+    """Bounded BFS neighborhood — never unbounded recursion."""
+    svc = get_services()
+    kg = svc.graph
+    visited_nodes: dict[str, dict] = {}
+    visited_edges: list[dict] = []
+    frontier = [node_id]
+    seen = {node_id}
+    for _ in range(depth):
+        nxt: list[UUID] = []
+        for nid in frontier:
+            try:
+                pairs = kg.neighbors(nid, limit=limit)
+            except Exception:
+                pairs = []
+            for edge, node in pairs:
+                eid = str(edge.id)
+                if eid not in {e["id"] for e in visited_edges}:
+                    visited_edges.append(
+                        {
+                            "id": eid,
+                            "relation": edge.relation.value
+                            if hasattr(edge.relation, "value")
+                            else str(edge.relation),
+                            "from_node_id": str(edge.from_node_id),
+                            "to_node_id": str(edge.to_node_id),
+                        }
+                    )
+                if node.id not in seen:
+                    seen.add(node.id)
+                    nxt.append(node.id)
+                    visited_nodes[str(node.id)] = {
+                        "id": str(node.id),
+                        "node_type": node.node_type.value
+                        if hasattr(node.node_type, "value")
+                        else str(node.node_type),
+                        "label": node.label,
+                    }
+                if len(visited_edges) >= limit:
+                    break
+            if len(visited_edges) >= limit:
+                break
+        frontier = nxt
+        if not frontier or len(visited_edges) >= limit:
+            break
+    return {
+        "root": str(node_id),
+        "depth": depth,
+        "nodes": list(visited_nodes.values())[:limit],
+        "edges": visited_edges[:limit],
+    }

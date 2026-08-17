@@ -1,4 +1,4 @@
-"""Audit logging for security-relevant actions."""
+"""Audit logging for security-relevant actions — never authorizes execution."""
 
 from __future__ import annotations
 
@@ -18,6 +18,9 @@ class AuditEntry(BaseModel):
     action: str
     actor: str = "system"
     case_id: UUID | None = None
+    workflow_id: UUID | None = None
+    result: str = "ok"
+    request_id: str = ""
     message: str = ""
     metadata: dict[str, Any] = Field(default_factory=dict)
     created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
@@ -35,15 +38,27 @@ class AuditService:
         *,
         actor: str = "system",
         case_id: UUID | None = None,
+        workflow_id: UUID | None = None,
+        result: str = "ok",
+        request_id: str = "",
         message: str = "",
         metadata: dict[str, Any] | None = None,
     ) -> AuditEntry:
+        safe_meta = sanitize_payload(metadata or {})
+        if workflow_id:
+            safe_meta.setdefault("workflow_id", str(workflow_id))
+        if request_id:
+            safe_meta.setdefault("request_id", request_id)
+        safe_meta.setdefault("result", result)
         entry = AuditEntry(
             action=action,
             actor=actor,
             case_id=case_id,
+            workflow_id=workflow_id,
+            result=result,
+            request_id=request_id,
             message=message or action,
-            metadata=sanitize_payload(metadata or {}),
+            metadata=safe_meta,
         )
         if self.bus is not None:
             try:
@@ -78,7 +93,7 @@ class AuditService:
                 )
             )
 
-    def list_recent(self, limit: int = 100, case_id: UUID | None = None) -> list[AuditEntry]:
+    def list_recent(self, limit: int = 50, case_id: UUID | None = None) -> list[AuditEntry]:
         with get_session() as session:
             q = session.query(EventRow).filter(EventRow.event_type == "audit")
             if case_id:
@@ -86,16 +101,19 @@ class AuditService:
             rows = q.order_by(EventRow.created_at.desc()).limit(limit).all()
             out: list[AuditEntry] = []
             for r in rows:
-                payload = dict(r.payload or {})
+                payload = dict(r.payload or {})  # type: ignore[arg-type]
+                action = str(payload.pop("action", "unknown"))
                 out.append(
                     AuditEntry(
                         id=UUID(str(r.id)),
-                        action=str(payload.get("action", "unknown")),
+                        action=action,
                         actor=str(r.actor or "system"),
                         case_id=UUID(str(r.case_id)) if r.case_id else None,
-                        message=str(r.message or ""),
-                        metadata={k: v for k, v in payload.items() if k != "action"},
-                        created_at=r.created_at,  # type: ignore[arg-type]
+                        result=str(payload.get("result", "ok")),
+                        request_id=str(payload.get("request_id", "")),
+                        message=str(r.message or "")[:500],
+                        metadata=sanitize_payload(payload),
+                        created_at=r.created_at if isinstance(r.created_at, datetime) else datetime.now(UTC),
                     )
                 )
             return out
