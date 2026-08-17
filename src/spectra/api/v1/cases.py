@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 
 from spectra.api.deps import Principal, ensure_write, get_principal, get_services
 from spectra.api.schemas.resources import (
@@ -46,10 +46,13 @@ def create_case(
 
 
 @router.get("", response_model=list[CaseOut])
-def list_cases(principal: Principal = Depends(get_principal)) -> list[CaseOut]:
+def list_cases(
+    principal: Principal = Depends(get_principal),
+    limit: int = Query(default=50, ge=1, le=500),
+) -> list[CaseOut]:
     svc = get_services()
     try:
-        cases = svc.cases.list_cases(limit=100)
+        cases = svc.cases.list_cases(limit=limit)
     except Exception:
         cases = []
     return [_case_out(c) for c in cases]
