@@ -12,6 +12,7 @@ from spectra.api.v1 import (
     findings,
     graph,
     health,
+    ledger,
     plugins,
     provenance,
     providers,
@@ -33,6 +34,7 @@ api_router.include_router(capabilities.router, prefix="/capabilities", tags=["ca
 api_router.include_router(providers.router, prefix="/providers", tags=["providers"])
 api_router.include_router(reports.router, prefix="/reports", tags=["reports"])
 api_router.include_router(export.router, prefix="/export", tags=["export"])
+api_router.include_router(ledger.router, prefix="/ledger", tags=["ledger"])
 api_router.include_router(events.router, prefix="/events", tags=["events"])
 api_router.include_router(audit.router, prefix="/audit", tags=["audit"])
 api_router.include_router(plugins.router, prefix="/plugins", tags=["plugins"])
