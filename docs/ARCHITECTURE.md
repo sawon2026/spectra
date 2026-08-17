@@ -74,3 +74,14 @@ Phase 10 completes the professional investigation UI surface against the existin
 - Full Alembic migration history (baseline stamp only; Alembic optional later).
 - Multi-tenant authz beyond current principal model.
 - Production-scale search/indexing.
+
+## Phase 11 — Professional platform maturity
+
+- Request ID middleware (`X-Request-ID`)
+- Provenance API: `GET /api/v1/provenance/by-case/{id}`
+- ReportExporter epistemic classification (FACT/OBSERVATION/INFERENCE/…)
+- Findings UI severity filters; reports preview
+- SCHEMA_VERSION=11
+- PLUGIN_GUIDE safer contracts
+
+Invariants preserved: PolicyEngine sole gate; UI never executes tools; AI ≠ FACT.
