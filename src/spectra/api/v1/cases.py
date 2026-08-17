@@ -49,10 +49,11 @@ def create_case(
 def list_cases(
     principal: Principal = Depends(get_principal),
     limit: int = Query(default=50, ge=1, le=500),
+    offset: int = Query(default=0, ge=0),
 ) -> list[CaseOut]:
     svc = get_services()
     try:
-        cases = svc.cases.list_cases(limit=limit)
+        cases = svc.cases.list_cases(limit=limit, offset=offset)
     except Exception:
         cases = []
     return [_case_out(c) for c in cases]
