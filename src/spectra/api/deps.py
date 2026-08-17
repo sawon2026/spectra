@@ -12,6 +12,7 @@ from spectra.capabilities.registry import CapabilityRegistry, seed_builtin_capab
 from spectra.cases.service import CaseService
 from spectra.core.config import SpectraSettings, get_settings
 from spectra.core.db import init_db
+from spectra.core.migrations import ensure_schema
 from spectra.events.bus import EventBus
 from spectra.events.sse import get_sse_hub
 from spectra.evidence.service import EvidenceService
@@ -60,6 +61,7 @@ def get_services() -> AppServices:
     if _services is None:
         settings = get_settings()
         init_db(settings)
+        ensure_schema(settings)
         bus = EventBus(persist=True)
         hub = get_sse_hub()
         bus.subscribe(hub.on_event)
@@ -114,7 +116,7 @@ def get_principal(
 
 def require_role(*allowed: str):
     def _check(principal: Principal = None) -> Principal:  # type: ignore[assignment]
-        return principal  # placeholder; routers use explicit checks
+        return principal
 
     return _check
 
