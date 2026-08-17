@@ -12,6 +12,7 @@ from spectra.api.v1 import (
     graph,
     health,
     plugins,
+    provenance,
     providers,
     reports,
     timeline,
@@ -24,6 +25,7 @@ api_router.include_router(auth.router, prefix="/auth", tags=["auth"])
 api_router.include_router(cases.router, prefix="/cases", tags=["cases"])
 api_router.include_router(workflows.router, prefix="/workflows", tags=["workflows"])
 api_router.include_router(findings.router, prefix="/findings", tags=["findings"])
+api_router.include_router(provenance.router, prefix="/provenance", tags=["provenance"])
 api_router.include_router(timeline.router, prefix="/timeline", tags=["timeline"])
 api_router.include_router(graph.router, prefix="/graph", tags=["graph"])
 api_router.include_router(capabilities.router, prefix="/capabilities", tags=["capabilities"])
