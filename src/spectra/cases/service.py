@@ -71,89 +71,67 @@ class CaseService:
                 return None
             return self._to_model(row)
 
-    def list_cases(self, status: CaseStatus | None = None, limit: int = 50) -> list[Case]:
+    def list_cases(
+        self,
+        status: CaseStatus | None = None,
+        limit: int = 50,
+        offset: int = 0,
+    ) -> list[Case]:
         with get_session() as session:
             q = session.query(CaseRow).order_by(CaseRow.created_at.desc())
             if status:
                 q = q.filter(CaseRow.status == status.value)
-            rows = q.limit(limit).all()
+            rows = q.offset(max(0, offset)).limit(limit).all()
             return [self._to_model(r) for r in rows]
-
-    def update_status(self, case_id: UUID, status: CaseStatus) -> Case:
-        with get_session() as session:
-            row = session.query(CaseRow).filter(CaseRow.id == case_id).first()
-            if not row:
-                raise ValueError(f"Case {case_id} not found")
-            row.status = status.value
-            row.updated_at = datetime.now(UTC)
-            if status == CaseStatus.CLOSED:
-                row.closed_at = datetime.now(UTC)
-            session.flush()
-            case = self._to_model(row)
-        self._bus.publish(
-            SpectraEvent(
-                event_type=EventType.CASE_UPDATED,
-                case_id=case_id,
-                message=f"Status changed to {status.value}",
-                payload={"status": status.value},
-                actor="case_service",
-            )
-        )
-        return case
 
     def set_scope(self, data: ScopeCreate) -> Scope:
         scope = Scope(
             case_id=data.case_id,
             auth_status=data.auth_status,
-            auth_basis=data.auth_basis,
-            auth_evidence=data.auth_evidence,
-            in_scope_assets=data.in_scope_assets,
-            out_of_scope_assets=data.out_of_scope_assets,
-            allowed_activities=data.allowed_activities,
-            forbidden_activities=data.forbidden_activities,
             network_profile=data.network_profile,
-            time_window_start=data.time_window_start,
-            time_window_end=data.time_window_end,
-            notes=data.notes,
-            ready_for_act=False,
+            allowed_activities=list(data.allowed_activities or []),
+            forbidden_activities=list(data.forbidden_activities or []),
+            assets=list(data.assets or []),
+            auth_basis=data.auth_basis or "",
+            notes=data.notes or "",
         )
-        # Auto-set ready only when fully authorized and assets present or offline
-        if (
-            scope.auth_status == AuthStatus.GRANTED
-            and (scope.in_scope_assets or scope.network_profile == NetworkProfile.OFFLINE)
-        ):
-            scope.ready_for_act = True
-
         with get_session() as session:
-            # replace existing scope for case
-            session.query(ScopeRow).filter(ScopeRow.case_id == data.case_id).delete()
-            row = ScopeRow(
-                id=scope.id,
-                case_id=scope.case_id,
-                auth_status=scope.auth_status.value,
-                auth_basis=scope.auth_basis,
-                auth_evidence=scope.auth_evidence,
-                in_scope_assets=[a.model_dump() for a in scope.in_scope_assets],
-                out_of_scope_assets=[a.model_dump() for a in scope.out_of_scope_assets],
-                allowed_activities=scope.allowed_activities,
-                forbidden_activities=scope.forbidden_activities,
-                network_profile=scope.network_profile.value,
-                time_window_start=scope.time_window_start,
-                time_window_end=scope.time_window_end,
-                ready_for_act=scope.ready_for_act,
-                notes=scope.notes,
-                created_at=scope.created_at,
-                updated_at=scope.updated_at,
-                metadata_=scope.metadata,
-            )
-            session.add(row)
-        event = EventType.SCOPE_READY if scope.ready_for_act else EventType.SCOPE_CREATED
+            existing = session.query(ScopeRow).filter(ScopeRow.case_id == data.case_id).first()
+            if existing:
+                existing.auth_status = scope.auth_status.value
+                existing.network_profile = scope.network_profile.value
+                existing.allowed_activities = scope.allowed_activities
+                existing.forbidden_activities = scope.forbidden_activities
+                existing.assets = [a.model_dump() if hasattr(a, "model_dump") else a for a in scope.assets]
+                existing.auth_basis = scope.auth_basis
+                existing.notes = scope.notes
+                existing.updated_at = datetime.now(UTC)
+                session.add(existing)
+                scope.id = existing.id
+            else:
+                row = ScopeRow(
+                    id=scope.id,
+                    case_id=scope.case_id,
+                    auth_status=scope.auth_status.value,
+                    network_profile=scope.network_profile.value,
+                    allowed_activities=scope.allowed_activities,
+                    forbidden_activities=scope.forbidden_activities,
+                    assets=[a.model_dump() if hasattr(a, "model_dump") else a for a in scope.assets],
+                    auth_basis=scope.auth_basis,
+                    notes=scope.notes,
+                    created_at=scope.created_at,
+                    updated_at=scope.updated_at,
+                )
+                session.add(row)
         self._bus.publish(
             SpectraEvent(
-                event_type=event,
+                event_type=EventType.SCOPE_UPDATED,
                 case_id=scope.case_id,
-                message=f"Scope set (auth={scope.auth_status.value}, ready={scope.ready_for_act})",
-                payload={"auth_status": scope.auth_status.value, "ready_for_act": scope.ready_for_act},
+                message=f"Scope updated auth={scope.auth_status.value}",
+                payload={
+                    "auth_status": scope.auth_status.value,
+                    "network_profile": scope.network_profile.value,
+                },
                 actor="case_service",
             )
         )
@@ -164,37 +142,37 @@ class CaseService:
             row = session.query(ScopeRow).filter(ScopeRow.case_id == case_id).first()
             if not row:
                 return None
+            assets = []
+            for a in row.assets or []:
+                if isinstance(a, dict):
+                    try:
+                        assets.append(ScopeAsset(**a))
+                    except Exception:
+                        pass
             return Scope(
                 id=row.id,
                 case_id=row.case_id,
                 auth_status=AuthStatus(row.auth_status),
-                auth_basis=row.auth_basis or "",
-                auth_evidence=row.auth_evidence or "",
-                in_scope_assets=[ScopeAsset(**a) for a in (row.in_scope_assets or [])],
-                out_of_scope_assets=[ScopeAsset(**a) for a in (row.out_of_scope_assets or [])],
-                allowed_activities=row.allowed_activities or [],
-                forbidden_activities=row.forbidden_activities or [],
                 network_profile=NetworkProfile(row.network_profile),
-                time_window_start=row.time_window_start,
-                time_window_end=row.time_window_end,
-                ready_for_act=bool(row.ready_for_act),
+                allowed_activities=list(row.allowed_activities or []),
+                forbidden_activities=list(row.forbidden_activities or []),
+                assets=assets,
+                auth_basis=row.auth_basis or "",
                 notes=row.notes or "",
                 created_at=row.created_at,
                 updated_at=row.updated_at,
-                metadata=row.metadata_ or {},
             )
 
-    @staticmethod
-    def _to_model(row: CaseRow) -> Case:
+    def _to_model(self, row: CaseRow) -> Case:
         return Case(
             id=row.id,
             name=row.name,
             description=row.description or "",
             status=CaseStatus(row.status),
             project_id=row.project_id,
-            tags=row.tags or [],
+            tags=list(row.tags or []),
             created_at=row.created_at,
             updated_at=row.updated_at,
             closed_at=row.closed_at,
-            metadata=row.metadata_ or {},
+            metadata=dict(row.metadata_ or {}),
         )
