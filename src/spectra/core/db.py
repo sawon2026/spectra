@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Generator
-from contextlib import contextmanager
+from contextlib import contextmanager, suppress
 from uuid import UUID
 
 from sqlalchemy import (
@@ -185,6 +185,8 @@ def init_db(settings: SpectraSettings | None = None) -> None:
             cursor.execute("PRAGMA journal_mode=WAL")
             cursor.close()
 
+    with suppress(Exception):
+        from spectra.core.migrations import SchemaVersionRow  # noqa: F401
     Base.metadata.create_all(_engine)
     _SessionLocal = sessionmaker(bind=_engine, autoflush=False, autocommit=False, future=True)
     logger.info("database_initialized", url=_safe_url(url))
@@ -327,8 +329,6 @@ class WorkflowRow(Base):
 class TimelineEntryRow(Base):
     """Unified investigation timeline (Phase 6)."""
 
-    __tablename__ = "timeline_entries"
-
     id = Column(GUID(), primary_key=True)
     case_id = Column(GUID(), nullable=False, index=True)
     investigation_id = Column(GUID(), nullable=True, index=True)
@@ -340,6 +340,7 @@ class TimelineEntryRow(Base):
     references = Column(JSON, default=list)
     payload = Column(JSON, default=dict)
     created_at = Column(DateTime(timezone=True), nullable=False)
+    __tablename__ = "timeline_entries"
 
 
 class ProvenanceLinkRow(Base):
