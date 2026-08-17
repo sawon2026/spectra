@@ -16,7 +16,7 @@ from spectra.core.logging import get_logger
 
 logger = get_logger(__name__)
 
-SCHEMA_VERSION = 11  # Phase 11 maturity
+SCHEMA_VERSION = 12  # Phase 12 hardening
 
 
 class SchemaVersionRow(Base):
@@ -40,7 +40,7 @@ def ensure_schema(settings=None) -> int:
             session.add(
                 SchemaVersionRow(
                     version=SCHEMA_VERSION,
-                    description="phase11-maturity",
+                    description="phase12-hardening",
                     applied_at=datetime.now(UTC),
                 )
             )
