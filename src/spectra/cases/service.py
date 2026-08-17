@@ -28,7 +28,6 @@ class CaseService:
             status=CaseStatus.DRAFT,
         )
         with get_session() as session:
-            # uniqueness check
             existing = session.query(CaseRow).filter(CaseRow.name == case.name).first()
             if existing:
                 raise ValueError(f"Case with name '{case.name}' already exists")
@@ -122,7 +121,6 @@ class CaseService:
             notes=data.notes,
             ready_for_act=False,
         )
-        # Auto-set ready only when fully authorized and assets present or offline
         if (
             scope.auth_status == AuthStatus.GRANTED
             and (scope.in_scope_assets or scope.network_profile == NetworkProfile.OFFLINE)
@@ -130,7 +128,6 @@ class CaseService:
             scope.ready_for_act = True
 
         with get_session() as session:
-            # replace existing scope for case
             session.query(ScopeRow).filter(ScopeRow.case_id == data.case_id).delete()
             row = ScopeRow(
                 id=scope.id,
@@ -196,7 +193,7 @@ class CaseService:
             case_id=row.case_id,
             auth_status=AuthStatus(row.auth_status),
             auth_basis=row.auth_basis or "",
-            auth_evidence=list(row.auth_evidence or []),
+            auth_evidence=row.auth_evidence or "",
             in_scope_assets=_assets(row.in_scope_assets),
             out_of_scope_assets=_assets(row.out_of_scope_assets),
             allowed_activities=list(row.allowed_activities or []),
