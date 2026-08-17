@@ -93,8 +93,8 @@ export default function CaseDetailPage() {
           <ul className="space-y-2 text-sm">
             {timeline.slice(0, 20).map((t) => (
               <li key={t.id} className="border-b border-zinc-800/80 pb-2">
-                <span className="text-zinc-400 text-xs">{t.event_type || t.kind || "event"}</span>
-                <div className="text-zinc-200">{t.message || t.summary || "—"}</div>
+                <span className="text-zinc-400 text-xs">{t.kind || "event"}</span>
+                <div className="text-zinc-200">{t.summary || "—"}</div>
               </li>
             ))}
           </ul>
